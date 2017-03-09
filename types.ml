@@ -6,7 +6,7 @@ type ('a, 'b) either =
   | Left of 'a
   | Right of 'b
 
-               
+
 type sourcespan = (Lexing.position * Lexing.position)
 exception UnboundId of string * sourcespan (* name, where used *)
 exception UnboundFun of string * sourcespan (* name of fun, where used *)
@@ -72,12 +72,11 @@ and 'a cexpr = (* compound expressions *)
   | CTuple of 'a immexpr list * 'a
   | CGetItem of 'a immexpr * 'a immexpr * 'a
   | CSetItem of 'a immexpr * 'a immexpr * 'a immexpr * 'a
-  | CLambda of string list * 'a aexpr * 'a                                            
+  | CLambda of string list * 'a aexpr * 'a
   | CImmExpr of 'a immexpr (* for when you just need an immediate value *)
 and 'a aexpr = (* anf expressions *)
   | ALet of string * 'a cexpr * 'a aexpr * 'a
   | ALetRec of (string * 'a cexpr) list * 'a aexpr * 'a
   | ASeq of 'a cexpr * 'a aexpr * 'a
   | ACExpr of 'a cexpr
-
 and 'a aprogram = 'a aexpr

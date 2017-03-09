@@ -2,6 +2,7 @@ open Printf
 
 type reg =
   | EAX
+  | EBX
   | ECX
   | EDX
   | ESP
@@ -43,6 +44,7 @@ type instruction =
   | IPush of arg
   | IPop of arg
   | ICall of arg
+  | ICallLabel of string
   | IRet
 
   | ICmp of arg * arg
@@ -65,12 +67,13 @@ type instruction =
 let r_to_asm (r : reg) : string =
   match r with
   | EAX -> "eax"
-  | ESP -> "esp"
-  | EBP -> "ebp"
-  | ESI -> "esi"
+  | EBX -> "ebx"
   | ECX -> "ecx"
   | EDX -> "edx"
   | CL -> "cl"
+  | ESP -> "esp"
+  | EBP -> "ebp"
+  | ESI -> "esi"
 
 let s_to_asm (s : size) : string =
   match s with
@@ -128,6 +131,8 @@ let rec i_to_asm (i : instruction) : string =
      sprintf "  pop %s" (arg_to_asm arg)
   | ICall(arg) ->
      sprintf "  call %s" (arg_to_asm arg)
+  | ICallLabel(arg) ->
+     sprintf "  call %s" arg
   | ILabel(name) ->
      sprintf "%s:" name
   | IJne(label) ->

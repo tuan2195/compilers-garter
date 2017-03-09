@@ -16,26 +16,40 @@ const int BOOL_TRUE      = 0xFFFFFFFF;
 const int BOOL_FALSE     = 0x7FFFFFFF;
 
 
-
-const int ERR_COMP_NOT_NUM   = 1;
-const int ERR_ARITH_NOT_NUM  = 2;
-const int ERR_LOGIC_NOT_BOOL = 3;
-const int ERR_IF_NOT_BOOL    = 4;
-const int ERR_OVERFLOW       = 5;
-const int ERR_GET_NOT_TUPLE  = 6;
-const int ERR_GET_LOW_INDEX  = 7;
-const int ERR_GET_HIGH_INDEX = 8;
-const int ERR_INDEX_NOT_NUM  = 9;
-const int ERR_OUT_OF_MEMORY  = 10;
+const int ERR_COMP_NOT_NUM   =  1;
+const int ERR_ARITH_NOT_NUM  =  2;
+const int ERR_LOGIC_NOT_BOOL =  3;
+const int ERR_IF_NOT_BOOL    =  4;
+const int ERR_OVERFLOW       =  5;
+const int ERR_GET_NOT_TUPLE  =  6;
+const int ERR_GET_LOW_INDEX  =  7;
+const int ERR_GET_HIGH_INDEX =  8;
+const int ERR_INDEX_NOT_NUM  =  9;
+const int ERR_NOT_LAMBDA     = 10;
+const int ERR_WRONG_ARITY    = 11;
+const int ERR_OUT_OF_MEMORY  = 12;
 
 size_t HEAP_SIZE;
 int* STACK_BOTTOM;
 int* HEAP;
 int* HEAP_END;
 
-int equal(int val1, int val2) {
-  if(val1 == val2) { return BOOL_TRUE; }
-  else { return BOOL_FALSE; }
+int equal(int a, int b)
+{
+    if (a == b)
+        return BOOL_TRUE;
+
+    if (((a & TUPLE_TAG_MASK) != 0x1) || ((b & TUPLE_TAG_MASK) != 0x1))
+        return BOOL_FALSE;
+
+    const int* tup_a = (int*)(a - 1);
+    const int* tup_b = (int*)(b - 1);
+
+    for (size_t i = 0; i <= tup_a[0]; ++i)
+        if (equal(tup_a[i], tup_b[i]) == BOOL_FALSE)
+            return BOOL_FALSE;
+
+    return BOOL_TRUE;
 }
 
 int tupleCounter = 0;
@@ -91,13 +105,13 @@ void error(int i) {
     fprintf(stderr, "Error: arithmetic expected a number\n");
     break;
   case ERR_LOGIC_NOT_BOOL:
-    fprintf(stderr, "Error logic expected a boolean\n");
+    fprintf(stderr, "Error: logic expected a boolean\n");
     break;
   case ERR_IF_NOT_BOOL:
     fprintf(stderr, "Error: if expected a boolean\n");
     break;
   case ERR_OVERFLOW:
-    fprintf(stderr, "Error: Integer overflow\n");
+    fprintf(stderr, "Error: integer overflow\n");
     break;
   case ERR_GET_NOT_TUPLE:
     fprintf(stderr, "Error: get expected tuple\n");
@@ -109,18 +123,25 @@ void error(int i) {
     fprintf(stderr, "Error: index too large to get\n");
     break;
   case ERR_INDEX_NOT_NUM:
-    fprintf(stderr, "Error: get expected number for index\n");
+    fprintf(stderr, "Error: get expected numer for index\n");
+    break;
+  case ERR_NOT_LAMBDA:
+    fprintf(stderr, "Error: application expected a lambda/function\n");
+    break;
+  case ERR_WRONG_ARITY:
+    fprintf(stderr, "Error: wrong arity for lambda/function\n");
     break;
   default:
-    fprintf(stderr, "Error: Unknown error code: %d\n", i);
+    fprintf(stderr, "Error: unknown error code: %d\n", i);
   }
   exit(i);
 }
 
+
 /*
   Try to reserve the desired number of bytes of memory, and free garbage if
-  needed.  Fail (and exit the program) if there is insufficient memory.  Does 
-  not actually allocate the desired number of bytes of memory; the caller 
+  needed.  Fail (and exit the program) if there is insufficient memory.  Does
+  not actually allocate the desired number of bytes of memory; the caller
   will do that.
 
   Arguments:
@@ -135,7 +156,7 @@ void error(int i) {
                          code (i.e., ESP)
 
   Returns:
-    The new top of the heap (i.e. the new value of ESI) after garbage collection.  
+    The new top of the heap (i.e. the new value of ESI) after garbage collection.
     Does not actually allocate bytes_needed space.
 
   Side effect:
@@ -157,7 +178,7 @@ int* try_gc(int* alloc_ptr, int bytes_needed, int* cur_frame, int* cur_stack_top
     fprintf(stderr, "Out of memory: could not allocate a new semispace for garbage collection");
     exit(ERR_OUT_OF_MEMORY);
   }
-  
+
   // When you're confident in your collector, enable the following lines to trigger your GC
   if (CONFIDENT) {
     new_esi = gc(STACK_BOTTOM, cur_frame, cur_stack_top, HEAP, HEAP_END, new_heap);
@@ -170,7 +191,7 @@ int* try_gc(int* alloc_ptr, int bytes_needed, int* cur_frame, int* cur_stack_top
     new_heap = NULL;
     new_esi = alloc_ptr;
   }
-  
+
   // Note: strict greater-than is correct here: if new_esi + (bytes_needed / 4) == HEAP_END,
   // that does not mean we're *using* the byte at HEAP_END, but rather that it would be the
   // next free byte, which is still ok and not a heap-overflow.
