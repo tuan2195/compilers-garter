@@ -411,6 +411,8 @@ let rec free_a ae env =
         (*let free_ls = List.flatten (List.map (fun x -> free_c x new_env) (List.map snd expr_ls)) in*)
         (*free_ls @ free_a body new_env*)
         free_a body (env @ (List.map fst expr_ls))
+    | ASeq(expr, rest, _) ->
+        free_c expr env @ free_a rest env
     | ACExpr(e) ->
         free_c e env
 and free_c ce env =
@@ -435,6 +437,8 @@ and free_c ce env =
         free_a expr args
     | CImmExpr(i) ->
         free_i i env
+    | CSetItem(tup, idx, expr, _) ->
+        free_i tup env @ free_i idx env @ free_i expr env
 and free_i ie env =
     match ie with
     | ImmNum _ | ImmBool _ -> []
@@ -449,6 +453,7 @@ let count_vars e =
     match e with
     | ALet(_, bind, body, _) -> 1 + (helpC bind) + (helpA body)
     | ALetRec(expr_ls, body, _) -> 1 + (List.length expr_ls) + (helpA body)
+    | ASeq(expr, rest, _) -> helpC expr + helpA rest
     | ACExpr e -> helpC e
   and helpC e =
     match e with
@@ -479,6 +484,7 @@ let rec print_env e cmt =
     | [] -> ()
     | (x, _)::rest -> printf "%s: %s\n" cmt x; print_env rest cmt
 
+
 let rec compile_fun fun_name env e offset =
     let compiled = (compile_aexpr e (offset + 1) env (List.length env - offset) true) in
     let count_local_vars = count_vars e in
@@ -500,6 +506,17 @@ let rec compile_fun fun_name env e offset =
 and compile_aexpr e si env num_args is_tail =
     match e with
     | ALetRec(expr_ls, body, _) ->
+        (*let new_env = env @ (List.mapi*)
+            (*(fun i x -> (fst x, RegOffset(word_size*(~-(si+i)), EBP)))*)
+            (*expr_ls) in*)
+        (*let new_si = si + (List.length expr_ls) in*)
+        (*let funcs = List.flatten (List.map*)
+            (*(fun x ->*)
+                (*(compile_cexpr (snd x) new_si new_env num_args false) @*)
+                (*[ IMov(find new_env (fst x), Reg(EAX)); ] )*)
+            (*expr_ls) in*)
+        (*let main = compile_aexpr body new_si new_env num_args true in*)
+        (*funcs @ main*)
         let new_env = env @ (List.mapi
             (fun i x -> (fst x, RegOffset(word_size*(~-(si+i)), EBP)))
             expr_ls) in
@@ -517,31 +534,6 @@ and compile_aexpr e si env num_args is_tail =
             expr_ls) in
         let main = compile_aexpr body new_si new_env num_args true in
         preload @ funcs @ main
-
-        (*let (env, si, preload) =*)
-            (*try ignore (List.assoc name env);*)
-                (*(env, si, [])*)
-            (*with Not_found ->*)
-                (*let rec rec_env e si env heap =*)
-                    (*match e with*)
-                    (*| ALetRec(name, func, body, _) ->*)
-                        (*let (new_env, new_si) = rec_env body (si+1) env (heap + lambda_heap_size func) in*)
-                        (*(((name, RegOffset(word_size*(~-si), EBP)), heap)::new_env, new_si)*)
-                    (*| _ -> ([], si) in*)
-                (*let (new_env_and_offset, new_si) = rec_env e si env 0 in*)
-                (*let new_env = List.map fst new_env_and_offset in*)
-                (*let preload = List.flatten (List.map*)
-                    (*(fun x  -> [*)
-                        (*ILineComment(sprintf "Preload function %s" (fst (fst x)));*)
-                        (*IMov(Reg(EDX), Reg(ESI));*)
-                        (*IAdd(Reg(EDX), Const(word_size*(snd x) + offset_func));*)
-                        (*IMov(find new_env (fst (fst x)), Reg(EDX)); ])*)
-                    (*new_env_and_offset) in*)
-                (*(new_env @ env, new_si, preload) in*)
-        (*let func = compile_cexpr lambda si env num_args false in*)
-        (*let main = compile_aexpr body si env num_args true in*)
-        (*let cmt = comment lambda name in*)
-        (*preload @ cmt @ func @ main*)
     | ALet(name, expr, body, _) ->
         let arg = RegOffset(~-si*word_size, EBP) in
         let new_env = (name, arg)::env in
@@ -549,6 +541,9 @@ and compile_aexpr e si env num_args is_tail =
         let main = compile_aexpr body (si+1) new_env num_args true in
         let cmt = comment expr name in
         cmt @ setup @ [ IMov(arg, Reg(EAX)) ] @ main
+    | ASeq(expr, rest, _) ->
+        compile_cexpr expr si env num_args false @
+        compile_aexpr rest si env num_args false
     | ACExpr(e) ->
         compile_cexpr e si env num_args true
 and compile_cexpr e si env num_args is_tail =
@@ -700,8 +695,7 @@ and compile_cexpr e si env num_args is_tail =
             ICmp(Reg(EBX), Const(List.length args));
             IJne(snd err_WRONG_ARITY);
         ] in
-        let setup = [ IPush(Reg(EAX)); ] @
-            List.map
+        let setup = [ IPush(Reg(EAX)); ] @ List.map
             (fun arg -> IPush(Sized(DWORD_PTR, arg)))
             (List.rev_map (fun x -> compile_imm x env) args) in
         let call = [
@@ -731,22 +725,30 @@ and compile_cexpr e si env num_args is_tail =
             if size mod 2 = 0 then [ IAdd(Reg(ESI), Const(word_size*(size+2))); ]
             else [ IAdd(Reg(ESI), Const(word_size*(size+1))); ] in
         prelude @ load @ padding
-    | CGetItem(tup, idx, _) -> [
-        IMov(Reg(ECX), compile_imm tup env);
-        (* TODO: Better testing *)
-        ITest(Reg(ECX), tag_1_bit);
-        IJz(snd err_NOT_TUPLE);
-        ISub(Reg(ECX), Const(1)); ]
-      @ check_index (compile_imm idx env) @ [
-        ISar(Reg(EAX), Const(1));
-        ICmp(Reg(EAX), Const(0));
-        IJl(snd err_INDEX_SMALL);
-        IAdd(Reg(EAX), Const(1));
-        IMov(Reg(EDX), RegOffset(0, ECX));
-        ICmp(Reg(EAX), Reg(EDX));
-        IJg(snd err_INDEX_LARGE);
+    | CGetItem(tup, idx, _) ->
+        tuple_test tup idx env @ [
         IMov(Reg(EAX), RegOffsetReg(ECX, EAX, word_size, 0));
         ]
+    | CSetItem(tup, idx, expr, _) ->
+        tuple_test tup idx env @ [
+        IMov(Reg(EDX), compile_imm expr env);
+        IMov(RegOffsetReg(ECX, EAX, word_size, 0), Reg(EDX));
+        ]
+and tuple_test tup idx env = [
+    IMov(Reg(ECX), compile_imm tup env);
+    (* TODO: Better testing *)
+    ITest(Reg(ECX), tag_1_bit);
+    IJz(snd err_NOT_TUPLE);
+    ISub(Reg(ECX), Const(1)); ]
+  @ check_index (compile_imm idx env) @ [
+    ISar(Reg(EAX), Const(1));
+    ICmp(Reg(EAX), Const(0));
+    IJl(snd err_INDEX_SMALL);
+    IAdd(Reg(EAX), Const(1));
+    IMov(Reg(EDX), RegOffset(0, ECX));
+    ICmp(Reg(EAX), Reg(EDX));
+    IJg(snd err_INDEX_LARGE);
+    ]
 and compile_imm e env =
     match e with
     | ImmNum(n, _) -> Const(n lsl 1)
