@@ -683,7 +683,7 @@ and compile_cexpr e si env num_args is_tail =
             free_ls ) in
         let main = prologue @ reload @ body @ epilogue in
         let post = [ ILabel(label); ] in
-        setup @ main @ post
+        try_gc heap_size @ setup @ main @ post
     | CApp(func, args, _) ->
         let tests = [
             IMov(Reg(EAX), compile_imm func env);
@@ -710,6 +710,9 @@ and compile_cexpr e si env num_args is_tail =
         [ IMov(Reg(EAX), compile_imm e env) ]
     | CTuple(expr_ls, _) ->
         let size = List.length expr_ls in
+        let heap_size =
+            if size mod 2 = 0 then word_size*(size+2)
+            else word_size*(size+1) in
         let prelude = [
             IMov(Reg(EAX), Reg(ESI));
             IOr(Reg(EAX), tag_1_bit);
@@ -721,10 +724,7 @@ and compile_cexpr e si env num_args is_tail =
             ]) )
             (word_size, [])
             expr_ls in
-        let padding =
-            if size mod 2 = 0 then [ IAdd(Reg(ESI), Const(word_size*(size+2))); ]
-            else [ IAdd(Reg(ESI), Const(word_size*(size+1))); ] in
-        prelude @ load @ padding
+        try_gc heap_size @ prelude @ load @ [ IAdd(Reg(ESI), Const(heap_size)); ]
     | CGetItem(tup, idx, _) ->
         tuple_test tup idx env @ [
         IMov(Reg(EAX), RegOffsetReg(ECX, EAX, word_size, 0));
@@ -770,6 +770,15 @@ and strip ls = ls
     (*| ILineComment(_)::rest -> strip rest*)
     (*| IInstrComment(i, _)::rest -> i::strip rest*)
     (*| i::rest -> i::strip rest*)
+and try_gc size = [
+    IPush(Reg(ESP));
+    IPush(Reg(EBP));
+    IPush(Const(size));
+    IPush(Reg(ESI));
+    ICallLabel("try_gc");
+    IMov(Reg(ESI), Reg(EAX));
+    IAdd(Reg(ESP), Const(word_size * 4));
+    ]
 and optimize ls =
     let rec opt ls =
         match ls with
@@ -784,8 +793,6 @@ and optimize ls =
     opt (strip ls)
 ;;
 
-(* IMPLEMENT THIS FROM YOUR PREVIOUS ASSIGNMENT -- THE ONLY NEW CODE IS CSetItem and ALet *)
-(*let compile_fun name args body = failwith "NYI: compile_fun"*)
 
 (* UPDATE THIS TO HANDLE FIRST-CLASS FUNCTIONS AS NEEDED *)
 let call (label : arg) args =
@@ -848,9 +855,10 @@ let compile_prog anfed =
     "section .text
 extern error
 extern print
-extern input
 extern equal
-extern print_stack
+extern try_gc
+extern HEAP_END
+extern STACK_BOTTOM
 global our_code_starts_here" in
     let suffix =
         let call err = [ ILabel(snd err); IPush(fst err); ICallLabel("error"); ] in
@@ -869,11 +877,18 @@ global our_code_starts_here" in
         ]) in
     let (prologue, comp_main, epilogue) = compile_fun "our_code_starts_here" [] anfed 0 in
     let heap_start = [
-        ILineComment("heap start");
+        IInstrComment(IMov(LabelContents("STACK_BOTTOM"), Reg(EBP)), "This is the bottom of our Garter stack");
+        ILineComment("Heap start");
         IInstrComment(IMov(Reg(ESI), RegOffset(8, EBP)), "Load ESI with our argument, the heap pointer");
         IInstrComment(IAdd(Reg(ESI), Const(7)), "Align it to the nearest multiple of 8");
         IInstrComment(IAnd(Reg(ESI), HexConst(0xFFFFFFF8)), "by adding no more than 7 to it")
-    ] in
+      ] in
+    (*let heap_start = [*)
+        (*ILineComment("heap start");*)
+        (*IInstrComment(IMov(Reg(ESI), RegOffset(8, EBP)), "Load ESI with our argument, the heap pointer");*)
+        (*IInstrComment(IAdd(Reg(ESI), Const(7)), "Align it to the nearest multiple of 8");*)
+        (*IInstrComment(IAnd(Reg(ESI), HexConst(0xFFFFFFF8)), "by adding no more than 7 to it")*)
+    (*] in*)
     let main = strip (prologue @ heap_start @ comp_main @ epilogue) in
     sprintf "%s%s%s" prelude (to_asm main) suffix
 
