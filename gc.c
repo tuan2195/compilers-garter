@@ -31,8 +31,8 @@ void smarter_print_heap(int* from_start, int* from_end, int* to_start, int* to_e
     with a forwarding pointer to its new location
  */
 
-#define FORWARD_TAG 0x80000000
-int* copy_if_needed(int* garter_val_addr, int* heap_top) {
+int* copy_if_needed(int* garter_val_addr, int* heap_top)
+{
     int val = *garter_val_addr;
     int* addr = NULL;
     int size = 0;
@@ -51,7 +51,7 @@ int* copy_if_needed(int* garter_val_addr, int* heap_top) {
         size = addr[2];
         offset = 3;
     }
-    else if ((val & BIT3_MASK) != 0) // Tuple
+    else if ((val & BIT3_MASK) == TUPLE_TAG)
     {
         TAG = TUPLE_TAG;
         addr = (int*)(val - TAG);
@@ -60,18 +60,22 @@ int* copy_if_needed(int* garter_val_addr, int* heap_top) {
     }
     else return heap_top;
 
-    if ((*addr & FORWARD_TAG) != 0)
+    if (*addr < 0)
     {
-        *garter_val_addr = (void*)(*addr) - FORWARD_TAG;
+        // Tag forwarding pointers with negative values
+        *garter_val_addr = ~*addr;
         return heap_top;
     }
+
     for(int i = 0; i < size; ++i)
     {
         heap_top[i] = addr[i];
     }
+
     *garter_val_addr = (int*)((void*)heap_top + TAG);
-    *addr = (int*)((*garter_val_addr) | FORWARD_TAG);
+    *addr = ~*garter_val_addr;
     heap_top += size;
+
     for(int i = offset; i < size; ++i)
     {
         heap_top = copy_if_needed(&old_top[i], heap_top);
@@ -93,19 +97,24 @@ int* copy_if_needed(int* garter_val_addr, int* heap_top) {
   Returns:
     The new location within to_start at which to allocate new data
  */
-int* gc(int* bottom_frame, int* top_frame, int* top_stack, int* from_start, int* from_end, int* to_start) {
-  for (int* cur_word = top_frame-1; cur_word >= top_stack; --cur_word)
-    to_start = copy_if_needed(cur_word, to_start);
+int* gc(int* bottom_frame, int* top_frame, int* top_stack, int* from_start, int* from_end, int* to_start)
+{
+    for (int* cur_word = top_frame-1; cur_word >= top_stack; --cur_word)
+    {
+        to_start = copy_if_needed(cur_word, to_start);
+    }
 
-  if (top_frame < bottom_frame)
-    to_start = gc(bottom_frame,
-                  (int*)(*top_frame), // [top_frame] points to the saved EBP, which is the next stack frame
-                                      // [top_frame+4] points to the return address
-                  top_frame + 2,      // [top_frame+8] is the next frame's stack-top
-                  from_start,
-                  from_end,
-                  to_start); // to_start has been changed to include any newly copied data
-  // after copying the remaining stack frames, return the new allocation starting point
-  return to_start;
+    if (top_frame < bottom_frame)
+    {
+        to_start = gc(bottom_frame,
+                      (int*)(*top_frame), // [top_frame] points to the saved EBP, which is the next stack frame
+                                          // [top_frame+4] points to the return address
+                      top_frame + 2,      // [top_frame+8] is the next frame's stack-top
+                      from_start,
+                      from_end,
+                      to_start); // to_start has been changed to include any newly copied data
+    }
+
+    return to_start;
 }
 
