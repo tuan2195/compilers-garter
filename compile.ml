@@ -255,42 +255,6 @@ let anf (p : tag program) : unit aprogram =
   helpP p
 ;;
 
-(*let free_vars (e : 'a aexpr) : string list =*)
-  (*let rec helpA (bound : string list) (e : 'a aexpr) : string list =*)
-     (*match e with*)
-     (*| ASeq(fst, rest, _) ->*)
-        (*helpC bound fst @ helpA bound rest*)
-     (*| ALet(name, binding, body, _) ->*)
-       (*(helpC bound binding) (* all the free variables in the binding, plus *)*)
-       (*(* all the free variables in the body, except the name itself *)*)
-       (*@ (helpA (name :: bound) body)*)
-     (*| ALetRec(bindings, body, _) ->*)
-        (*let names = List.map fst bindings in*)
-        (*let new_bound = (names @ bound) in*)
-        (*(helpA new_bound body) @ List.flatten (List.map (fun binding -> helpC new_bound (snd binding)) bindings)*)
-     (*| ACExpr c -> helpC bound c*)
-  (*and helpC (bound : string list) (e : 'a cexpr) : string list =*)
-    (*match e with*)
-    (*| CLambda(args, body, _) ->*)
-      (*helpA (args @ bound) body*)
-    (*| CIf(cond, thn, els, _) ->*)
-      (*helpI bound cond @ helpA bound thn @ helpA bound els*)
-    (*| CPrim1(_, arg, _) -> helpI bound arg*)
-    (*| CPrim2(_, left, right, _) -> helpI bound left @ helpI bound right*)
-    (*| CApp(fn, args, _) ->*)
-      (*(helpI bound fn) @ (List.flatten (List.map (fun arg -> helpI bound arg) args))*)
-    (*| CTuple(vals, _) -> List.flatten (List.map (fun v -> helpI bound v) vals)*)
-    (*| CGetItem(tup, idx, _) -> helpI bound tup @ helpI bound idx*)
-    (*| CSetItem(tup, idx, rhs, _) -> helpI bound tup @ helpI bound idx @ helpI bound rhs*)
-    (*| CImmExpr i -> helpI bound i*)
-  (*and helpI (bound : string list) (e : 'a immexpr) : string list =*)
-    (*match e with*)
-    (*| ImmId(name, _) ->*)
-      (*(* a name is free if it is not bound *)*)
-      (*if List.mem name bound then [] else [name]*)
-    (*| _ -> []*)
-  (*in List.sort_uniq String.compare (helpA [] e)*)
-(*;;*)
 
 let reserve size tag =
   let ok = sprintf "$memcheck_%d" tag in
@@ -464,7 +428,7 @@ let count_vars e =
 let lambda_heap_size e =
     match e with
     | CLambda(args, expr, t) ->
-        let size = (List.length (rm_dup (free_a expr args)) + 2) in
+        let size = (List.length (rm_dup (free_a expr args)) + 3) in
         if size mod 2 = 0 then size
         else size + 1
     | _ -> failwith "Not a lambda!"
@@ -503,20 +467,9 @@ let rec compile_fun fun_name env e offset =
         IPop(Reg(EBP));
         IInstrComment(IRet, sprintf "End of %s" fun_name)
     ])
-and compile_aexpr e si env num_args is_tail =
+and compile_aexpr e si env num_args use_gc =
     match e with
     | ALetRec(expr_ls, body, _) ->
-        (*let new_env = env @ (List.mapi*)
-            (*(fun i x -> (fst x, RegOffset(word_size*(~-(si+i)), EBP)))*)
-            (*expr_ls) in*)
-        (*let new_si = si + (List.length expr_ls) in*)
-        (*let funcs = List.flatten (List.map*)
-            (*(fun x ->*)
-                (*(compile_cexpr (snd x) new_si new_env num_args false) @*)
-                (*[ IMov(find new_env (fst x), Reg(EAX)); ] )*)
-            (*expr_ls) in*)
-        (*let main = compile_aexpr body new_si new_env num_args true in*)
-        (*funcs @ main*)
         let new_env = env @ (List.mapi
             (fun i x -> (fst x, RegOffset(word_size*(~-(si+i)), EBP)))
             expr_ls) in
@@ -529,11 +482,12 @@ and compile_aexpr e si env num_args is_tail =
             (0, [])
             expr_ls in
         let preload = [ IMov(Reg(EDX), Reg(ESI)); IAdd(Reg(EDX), tag_func) ] @ load in
+        let gc = try_gc (List.fold_left (+) 0 (List.map (fun x -> lambda_heap_size (snd x)) expr_ls)) in
         let funcs = List.flatten (List.map
             (fun x -> compile_cexpr (snd x) new_si new_env num_args false)
             expr_ls) in
         let main = compile_aexpr body new_si new_env num_args true in
-        preload @ funcs @ main
+        gc @ preload @ funcs @ main
     | ALet(name, expr, body, _) ->
         let arg = RegOffset(~-si*word_size, EBP) in
         let new_env = (name, arg)::env in
@@ -546,7 +500,7 @@ and compile_aexpr e si env num_args is_tail =
         compile_aexpr rest si env num_args false
     | ACExpr(e) ->
         compile_cexpr e si env num_args true
-and compile_cexpr e si env num_args is_tail =
+and compile_cexpr e si env num_args use_gc =
     match e with
     | CIf (cnd, thn, els, t) ->
         let label_false = sprintf "__if_%d_false__" t in
@@ -649,23 +603,23 @@ and compile_cexpr e si env num_args is_tail =
         let free_ls = rm_dup (free_a expr args) in
         let func_name = sprintf "__lambda_%d__" t in
         let label = sprintf "__lambda_%d_done__" t in
-        let mov_free_vars = [ ILineComment("Load free variables to heap"); ] @
-            List.flatten ( List.mapi
-            (fun i id -> [
-                IMov(Reg(EDX), compile_imm (ImmId(id, 0)) env);
-                IMov(RegOffset((i+2)*word_size, ESI), Reg(EDX)); ])
-            free_ls ) in
         let heap_size =
-            let size = List.length free_ls + 2 in
+            (* Something's funny, fishy and fucky *)
+            let size = List.length free_ls + 3 in
             if size mod 2 = 0 then size
             else size + 1 in
         let setup = [
-            IMov(Sized(DWORD_PTR, RegOffset(0, ESI)), Const(List.length args));
-            IMov(Sized(DWORD_PTR, RegOffset(word_size, ESI)), Label(func_name));
-        ] @ mov_free_vars @ [
+            IMov(Sized(DWORD_PTR, RegOffset(word_size*0, ESI)), Const(List.length args));
+            IMov(Sized(DWORD_PTR, RegOffset(word_size*1, ESI)), Label(func_name));
+            IMov(Sized(DWORD_PTR, RegOffset(word_size*2, ESI)), Const(heap_size));
+        ] @ List.flatten ( List.mapi
+            (fun i id -> [
+                IMov(Reg(EDX), compile_imm (ImmId(id, 0)) env);
+                IMov(RegOffset((i+3)*word_size, ESI), Reg(EDX)); ])
+            free_ls ) @ [
             IMov(Reg(EAX), Reg(ESI));
-            IOr(Reg(EAX), tag_func);
-            IAdd(Reg(ESI), Const(word_size * heap_size));
+            IAdd(Reg(ESI), Const(word_size*heap_size));
+            IAdd(Reg(EAX), tag_func);
             IJmp(label);
         ] in
         let func_env =
@@ -674,16 +628,18 @@ and compile_cexpr e si env num_args is_tail =
         let (prologue, body, epilogue) = compile_fun func_name func_env expr (List.length free_ls) in
         let reload = [
             ILineComment("Reload free variables from heap");
+            (* Get reference to self via last function argument *)
             IMov(Reg(ECX), RegOffset(word_size*(List.length args+2), EBP));
         ] @ List.flatten (List.mapi
             (fun i id -> [
-                IMov(Reg(EDX), RegOffset(word_size*(i+2)-offset_func, ECX));
+                IMov(Reg(EDX), RegOffset(word_size*(i+3)-offset_func, ECX));
                 IMov(RegOffset(word_size*(~-(i+1)), EBP), Reg(EDX));
             ])
             free_ls ) in
         let main = prologue @ reload @ body @ epilogue in
         let post = [ ILabel(label); ] in
-        try_gc heap_size @ setup @ main @ post
+        let gc = if use_gc then try_gc heap_size else [] in
+        gc @ setup @ main @ post
     | CApp(func, args, _) ->
         let tests = [
             IMov(Reg(EAX), compile_imm func env);

@@ -119,20 +119,22 @@ let tests = [
   t "rec1" "let rec f = (lambda x: if x==0: 1 else: (x * f(x - 1))),
                     g = (lambda x: x + x) in f(g(3))" "720";
   t "rec2" "let rec f = (lambda x,y,z: x*y+z),
-          g = (lambda x,y: x+y),
-          h = (lambda x,y: 2*x+y) in
-          f(g(3,4),g(2,2),h(5,9))" "47";
+                    g = (lambda x,y: x+y),
+                    h = (lambda x,y: 2*x+y) in
+                    f(g(3,4),g(2,2),h(5,9))" "47";
   t "rec3" "let rec f = (lambda x,y,z,t: x*y+z*t),
-          g = (lambda x,y: x+y),
-          h = (lambda x,y: 2*x+y),
-          j = (lambda x: x*x) in
-          j(f(g(4,4),h(2,2),g(5,5),h(3,3)))" "272484";
+                    g = (lambda x,y: x+y),
+                    h = (lambda x,y: 2*x+y),
+                    j = (lambda x: x*x) in
+                    j(f(g(4,4),h(2,2),g(5,5),h(3,3)))" "272484";
   t "rec4" "let rec f = (lambda x, a: if x==1: a else: g(x - 1, a * x)),
             g = (lambda x, a: if x==1: a+1 else: f(x - 1, a + x)) in f(16, 1)" "20643839";
 
   t "free_1" "let x = 10 in let f = (lambda y: x + y) in f(10)" "20";
   t "free_2" "let x = 10 in let f = (lambda y, z: x + y + z) in f(10, 5)" "25";
   t "free_3" "let x = 10, y = 5 in let f = (lambda z, t: (x * z) + (y * t)) in f(10, 5)" "125";
+  t "free_4" "let x = 10, y = 5 in let f = (lambda z: x + y + z) in f(10)" "25";
+  t "free_5" "let x = 10, y = 5, z = 20 in let f = (lambda t: x + y + z + t) in f(10)" "45";
 
   t "ll_1" "let rec length = (lambda l: length_rec(l, 0)),
             length_rec = (lambda l, acc: if l == false: acc else: length_rec(l[1], acc + 1)) in
@@ -214,11 +216,15 @@ let tests = [
 ]
 
 let dut = [
-  t "tup_1" "let x = (3, 4), y = (5, 6, 7, 8, 9) in y[x[1]]" "9";
-  t "tup_20" "let x = ((0, false), (1, true), (2, (true, false))) in
-              begin x[0][1] := true; x[2][1][0] := false; x[1] := 5; x end"
-             "((0, true), 5, (2, (false, false)))";
-  t "tup_21" "let x = (1, 2, 3, 4, 5, 6) in begin x[x[x[x[x[x[0]]]]]] := 9; x end" "(1, 2, 3, 4, 5, 9)";
+  (*t "tup_1" "let x = (3, 4), y = (5, 6, 7, 8, 9) in y[x[1]]" "9";*)
+  (*t "tup_20" "let x = ((0, false), (1, true), (2, (true, false))) in*)
+              (*begin x[0][1] := true; x[2][1][0] := false; x[1] := 5; x end"*)
+             (*"((0, true), 5, (2, (false, false)))";*)
+  (*t "tup_21" "let x = (1, 2, 3, 4, 5, 6) in begin x[x[x[x[x[x[0]]]]]] := 9; x end" "(1, 2, 3, 4, 5, 9)";*)
+  t "rec2" "let rec f = (lambda x,y,z: x*y+z),
+                    g = (lambda x,y: x+y),
+                    h = (lambda x,y: 2*x+y) in
+                    f(g(3,4),g(2,2),h(5,9))" "47";
 ]
 let suite =
 "suite">:::tests

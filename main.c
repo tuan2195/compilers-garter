@@ -36,7 +36,10 @@ extern int* STACK_BOTTOM asm("STACK_BOTTOM");
 */
 
 // Do you trust your new GC?
-#define CONFIDENT 1
+/*#define DONT_USE_GC*/
+#define DEBUG
+#define BIG_SIZE 24
+#define SMALL_SIZE 16
 
 size_t HEAP_SIZE;
 int* STACK_BOTTOM;
@@ -44,7 +47,6 @@ int* HEAP;
 int* HEAP_END;
 
 int* try_gc(int* alloc_ptr, int bytes_needed, int* cur_frame, int* cur_stack_top) {
-  /*printf("Try GC called! bot_stack = %p\n", STACK_BOTTOM);*/
   fflush(stdout);
   int* new_heap = (int*)calloc(HEAP_SIZE, sizeof(int));
   int* new_heap_end = new_heap + HEAP_SIZE;
@@ -53,8 +55,12 @@ int* try_gc(int* alloc_ptr, int bytes_needed, int* cur_frame, int* cur_stack_top
 
   int* new_esi = NULL;
 
-  /*printf("---------------BEFORE-----------------\n");*/
-    /*naive_print_heap(HEAP, 8);*/
+#ifdef DEBUG
+  printf("Try GC called! bot_stack = %p\n", STACK_BOTTOM);
+  printf("---------------BEFORE-----------------\n");
+  naive_print_heap(HEAP, SMALL_SIZE);
+#endif
+
   // Abort early, if we can't allocate a new to-space
   if (new_heap == NULL) {
     fprintf(stderr, "Out of memory: could not allocate a new semispace for garbage collection");
@@ -62,17 +68,17 @@ int* try_gc(int* alloc_ptr, int bytes_needed, int* cur_frame, int* cur_stack_top
   }
 
   // When you're confident in your collector, enable the following lines to trigger your GC
-  if (CONFIDENT) {
+#ifndef DONT_USE_GC
     new_esi = gc(STACK_BOTTOM, cur_frame, cur_stack_top, HEAP, HEAP_END, new_heap);
     HEAP = new_heap;
     HEAP_END = new_heap_end;
     free(old_heap);
-  } else {
+#else
     // This just keeps ESI where it is, and cleans up after the unneeded allocation
     free(new_heap);
     new_heap = NULL;
     new_esi = alloc_ptr;
-  }
+#endif
 
   // Note: strict greater-than is correct here: if new_esi + (bytes_needed / 4) == HEAP_END,
   // that does not mean we're *using* the byte at HEAP_END, but rather that it would be the
@@ -88,9 +94,11 @@ int* try_gc(int* alloc_ptr, int bytes_needed, int* cur_frame, int* cur_stack_top
     exit(ERR_OUT_OF_MEMORY);
   }
   else {
-    /*printf("---------------AFTER-----------------\n");*/
-    /*printf("new_esi = %p old_heap = %p\n", new_esi, alloc_ptr);*/
-    /*naive_print_heap(HEAP, 8);*/
+#ifdef DEBUG
+    printf("---------------AFTER-----------------\n");
+    printf("new_esi = %p old_heap = %p\n", new_esi, alloc_ptr);
+    naive_print_heap(HEAP, SMALL_SIZE);
+#endif
     return new_esi;
   }
 }
@@ -109,7 +117,9 @@ int main(int argc, char** argv) {
     int result = our_code_starts_here(HEAP);
 
     print(result);
-    /*naive_print_heap(HEAP, 16);*/
+#ifdef DEBUG
+    naive_print_heap(HEAP, BIG_SIZE);
+#endif
     return 0;
 }
 
@@ -118,7 +128,7 @@ int equal(int a, int b)
     if (a == b)
         return BOOL_TRUE;
 
-    if (((a & TUPLE_TAG_MASK) != 0x1) || ((b & TUPLE_TAG_MASK) != 0x1))
+    if (((a & BIT3_MASK) != 0x1) || ((b & BIT3_MASK) != 0x1))
         return BOOL_FALSE;
 
     const int* tup_a = (int*)(a - 1);
@@ -142,10 +152,10 @@ void printHelp(FILE *out, int val) {
   else if(val == BOOL_FALSE) {
     fprintf(out, "false");
   }
-  else if ((val & TUPLE_TAG_MASK) == 5) {
+  else if ((val & BIT3_MASK) == FUNC_TAG) {
     fprintf(out, "<function>");
   }
-  else if ((val & TUPLE_TAG_MASK) != 0) {
+  else if ((val & BIT3_MASK) != 0) {
     int* addr = (int*)(val - 1);
     // Check whether we've visited this tuple already
     if ((*addr & 0x80000000) != 0) {
@@ -213,6 +223,9 @@ void error(int i) {
   default:
     fprintf(stderr, "Error: unknown error code: %d\n", i);
   }
+#ifdef DEBUG
+  naive_print_heap(HEAP, BIG_SIZE);
+#endif
   exit(i);
 }
 

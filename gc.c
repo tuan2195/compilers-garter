@@ -32,36 +32,37 @@ void smarter_print_heap(int* from_start, int* from_end, int* to_start, int* to_e
  */
 int* copy_if_needed(int* garter_val_addr, int* heap_top) {
     int val = *garter_val_addr;
-    /*printf("copy: addr = %p val = %x top = %p\n", garter_val_addr, val, heap_top);*/
-    fflush(stdout);
 
     if(((val & NUM_TAG_MASK) == 0) || (val == BOOL_TRUE) || (val == BOOL_FALSE))
     {
         return heap_top;
     }
-    else if ((val & TUPLE_TAG_MASK) == FUNC_TAG_MASK)
+    else if ((val & BIT3_MASK) == FUNC_TAG)
     {
         // Function
+        int* addr = (int*)(val - FUNC_TAG);
+        int size = addr[2];
+        int* old_top = heap_top;
+        for(int i = 0; i < size; ++i)
+            heap_top[i] = addr[i];
+        *garter_val_addr = (int*)((void*)heap_top + FUNC_TAG);
+        heap_top += size;
+        for(int i = 3; i < size; ++i)
+            heap_top = copy_if_needed(&old_top[i], heap_top);
         return heap_top;
     }
-    else if ((val & TUPLE_TAG_MASK) != 0) // Tuple
+    else if ((val & BIT3_MASK) != 0) // Tuple
     {
-        int* addr = (int*)(val-1);
+        int* addr = (int*)(val - TUPLE_TAG);
         int size = addr[0];
         size += (size % 2) ? 1 : 2; // Padding
         int* old_top = heap_top;
         for(int i = 0; i < size; ++i)
-        {
             heap_top[i] = addr[i];
-        }
-        *garter_val_addr = (int*)((void*)heap_top + 0x1); // Fucking pointer arithmetic
-        /*printf("Old val = %p new val = %p\n", val, *garter_val_addr);*/
-        fflush(stdout);
+        *garter_val_addr = (int*)((void*)heap_top + TUPLE_TAG);
         heap_top += size;
-        for(int i = 0; i < size; ++i)
-        {
+        for(int i = 1; i < size; ++i)
             heap_top = copy_if_needed(&old_top[i], heap_top);
-        }
     }
     else
     {
@@ -92,8 +93,6 @@ int* gc(int* bottom_frame, int* top_frame, int* top_stack, int* from_start, int*
 
   for (int* cur_word = bottom_frame; cur_word >= top_stack; --cur_word)
   {
-    /*printf("loop body: cur_word = %p\n", cur_word);*/
-    /*fflush(stdout);*/
     to_start = copy_if_needed(cur_word, to_start);
   }
   /*if (top_frame < bottom_frame)*/
