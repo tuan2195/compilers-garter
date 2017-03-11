@@ -69,6 +69,7 @@ int* copy_if_needed(int* garter_val_addr, int* heap_top)
 
     for(int i = 0; i < size; ++i)
     {
+        // Copy data from old heap to new
         heap_top[i] = addr[i];
     }
 
@@ -78,6 +79,7 @@ int* copy_if_needed(int* garter_val_addr, int* heap_top)
 
     for(int i = offset; i < size; ++i)
     {
+        // Skip the tag infos of tuples/lambdas
         heap_top = copy_if_needed(&old_top[i], heap_top);
     }
 
