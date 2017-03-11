@@ -34,6 +34,11 @@ void smarter_print_heap(int* from_start, int* from_end, int* to_start, int* to_e
 #define FORWARD_TAG 0x80000000
 int* copy_if_needed(int* garter_val_addr, int* heap_top) {
     int val = *garter_val_addr;
+    int* addr = NULL;
+    int size = 0;
+    int TAG = 0;
+    int offset = 0;
+    int* old_top = heap_top;
 
     if(((val & NUM_TAG_MASK) == 0) || (val == BOOL_TRUE) || (val == BOOL_FALSE))
     {
@@ -41,48 +46,37 @@ int* copy_if_needed(int* garter_val_addr, int* heap_top) {
     }
     else if ((val & BIT3_MASK) == FUNC_TAG)
     {
-        // Function
-        int* addr = (int*)(val - FUNC_TAG);
-        if ((*addr & FORWARD_TAG) != 0)
-        {
-            *garter_val_addr = (void*)(*addr) - FORWARD_TAG;
-            return heap_top;
-        }
-        int size = addr[2];
-        int* old_top = heap_top;
-        for(int i = 0; i < size; ++i)
-            heap_top[i] = addr[i];
-        *garter_val_addr = (int*)((void*)heap_top + FUNC_TAG);
-        *addr = (int*)((*garter_val_addr) | FORWARD_TAG);
-        heap_top += size;
-        for(int i = 3; i < size; ++i)
-            heap_top = copy_if_needed(&old_top[i], heap_top);
-        return heap_top;
+        TAG = FUNC_TAG;
+        addr = (int*)(val - TAG);
+        size = addr[2];
+        offset = 3;
     }
     else if ((val & BIT3_MASK) != 0) // Tuple
     {
-        int* addr = (int*)(val - TUPLE_TAG);
-        if ((*addr & FORWARD_TAG) != 0)
-        {
-            *garter_val_addr = (void*)(*addr) - FORWARD_TAG;
-            return heap_top;
-        }
-        const int size = (*addr) + (((*addr) % 2) ? 1 : 2); // Padding
-        int* old_top = heap_top;
-        for(int i = 0; i < size; ++i)
-            heap_top[i] = addr[i];
-        *garter_val_addr = (int*)((void*)heap_top + TUPLE_TAG);
-        *addr = (int*)((*garter_val_addr) | FORWARD_TAG);
-        heap_top += size;
-        for(int i = 1; i < size; ++i)
-            heap_top = copy_if_needed(&old_top[i], heap_top);
+        TAG = TUPLE_TAG;
+        addr = (int*)(val - TAG);
+        size = (*addr) + (((*addr) % 2) ? 1 : 2);
+        offset = 1;
     }
-    else
+    else return heap_top;
+
+    if ((*addr & FORWARD_TAG) != 0)
     {
-      /*fprintf(stdout, "Unknown value: %#010x", val);*/
+        *garter_val_addr = (void*)(*addr) - FORWARD_TAG;
+        return heap_top;
+    }
+    for(int i = 0; i < size; ++i)
+    {
+        heap_top[i] = addr[i];
+    }
+    *garter_val_addr = (int*)((void*)heap_top + TAG);
+    *addr = (int*)((*garter_val_addr) | FORWARD_TAG);
+    heap_top += size;
+    for(int i = offset; i < size; ++i)
+    {
+        heap_top = copy_if_needed(&old_top[i], heap_top);
     }
 
-    // no-op for now
     return heap_top;
 }
 
@@ -100,13 +94,6 @@ int* copy_if_needed(int* garter_val_addr, int* heap_top) {
     The new location within to_start at which to allocate new data
  */
 int* gc(int* bottom_frame, int* top_frame, int* top_stack, int* from_start, int* from_end, int* to_start) {
-  /*printf("gc bot = %p top_frame = %p top_stack = %p from_start = %p from_end = %p to_start = %p\n",*/
-          /*bottom_frame, top_frame, top_stack, from_start, from_end, to_start);*/
-  /*fflush(stdout);*/
-
-  /*for (int* cur_word = bottom_frame; cur_word >= top_stack; --cur_word)*/
-    /*to_start = copy_if_needed(cur_word, to_start);*/
-
   for (int* cur_word = top_frame-1; cur_word >= top_stack; --cur_word)
     to_start = copy_if_needed(cur_word, to_start);
 
