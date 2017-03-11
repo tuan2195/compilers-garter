@@ -878,17 +878,10 @@ global our_code_starts_here" in
     let (prologue, comp_main, epilogue) = compile_fun "our_code_starts_here" [] anfed 0 in
     let heap_start = [
         IInstrComment(IMov(LabelContents("STACK_BOTTOM"), Reg(EBP)), "This is the bottom of our Garter stack");
-        ILineComment("Heap start");
         IInstrComment(IMov(Reg(ESI), RegOffset(8, EBP)), "Load ESI with our argument, the heap pointer");
         IInstrComment(IAdd(Reg(ESI), Const(7)), "Align it to the nearest multiple of 8");
         IInstrComment(IAnd(Reg(ESI), HexConst(0xFFFFFFF8)), "by adding no more than 7 to it")
       ] in
-    (*let heap_start = [*)
-        (*ILineComment("heap start");*)
-        (*IInstrComment(IMov(Reg(ESI), RegOffset(8, EBP)), "Load ESI with our argument, the heap pointer");*)
-        (*IInstrComment(IAdd(Reg(ESI), Const(7)), "Align it to the nearest multiple of 8");*)
-        (*IInstrComment(IAnd(Reg(ESI), HexConst(0xFFFFFFF8)), "by adding no more than 7 to it")*)
-    (*] in*)
     let main = strip (prologue @ heap_start @ comp_main @ epilogue) in
     sprintf "%s%s%s" prelude (to_asm main) suffix
 

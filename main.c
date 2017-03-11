@@ -10,29 +10,6 @@ extern int* try_gc(int* alloc_ptr, int amount_needed, int* first_frame, int* sta
 extern int* HEAP_END asm("HEAP_END");
 extern int* STACK_BOTTOM asm("STACK_BOTTOM");
 
-const int NUM_TAG_MASK   = 0x00000001;
-const int TUPLE_TAG_MASK = 0x00000007;
-const int BOOL_TRUE      = 0xFFFFFFFF;
-const int BOOL_FALSE     = 0x7FFFFFFF;
-
-const int ERR_COMP_NOT_NUM   =  1;
-const int ERR_ARITH_NOT_NUM  =  2;
-const int ERR_LOGIC_NOT_BOOL =  3;
-const int ERR_IF_NOT_BOOL    =  4;
-const int ERR_OVERFLOW       =  5;
-const int ERR_GET_NOT_TUPLE  =  6;
-const int ERR_GET_LOW_INDEX  =  7;
-const int ERR_GET_HIGH_INDEX =  8;
-const int ERR_INDEX_NOT_NUM  =  9;
-const int ERR_NOT_LAMBDA     = 10;
-const int ERR_WRONG_ARITY    = 11;
-const int ERR_OUT_OF_MEMORY  = 12;
-
-size_t HEAP_SIZE;
-int* STACK_BOTTOM;
-int* HEAP;
-int* HEAP_END;
-
 /*
   Try to reserve the desired number of bytes of memory, and free garbage if
   needed.  Fail (and exit the program) if there is insufficient memory.  Does
@@ -57,7 +34,18 @@ int* HEAP_END;
   Side effect:
     Also updates HEAP_END to point to the new end of the heap, if it's changed
 */
+
+// Do you trust your new GC?
+#define CONFIDENT 1
+
+size_t HEAP_SIZE;
+int* STACK_BOTTOM;
+int* HEAP;
+int* HEAP_END;
+
 int* try_gc(int* alloc_ptr, int bytes_needed, int* cur_frame, int* cur_stack_top) {
+  /*printf("Try GC called! bot_stack = %p\n", STACK_BOTTOM);*/
+  fflush(stdout);
   int* new_heap = (int*)calloc(HEAP_SIZE, sizeof(int));
   int* new_heap_end = new_heap + HEAP_SIZE;
   int* old_heap = HEAP;
@@ -65,9 +53,8 @@ int* try_gc(int* alloc_ptr, int bytes_needed, int* cur_frame, int* cur_stack_top
 
   int* new_esi = NULL;
 
-  // Do you trust your new GC?
-  int CONFIDENT = 0;
-
+  /*printf("---------------BEFORE-----------------\n");*/
+    /*naive_print_heap(HEAP, 8);*/
   // Abort early, if we can't allocate a new to-space
   if (new_heap == NULL) {
     fprintf(stderr, "Out of memory: could not allocate a new semispace for garbage collection");
@@ -101,24 +88,29 @@ int* try_gc(int* alloc_ptr, int bytes_needed, int* cur_frame, int* cur_stack_top
     exit(ERR_OUT_OF_MEMORY);
   }
   else {
+    /*printf("---------------AFTER-----------------\n");*/
+    /*printf("new_esi = %p old_heap = %p\n", new_esi, alloc_ptr);*/
+    /*naive_print_heap(HEAP, 8);*/
     return new_esi;
   }
 }
 
 int main(int argc, char** argv) {
-  if(argc > 1) {
-    HEAP_SIZE = atoi(argv[1]);
-  }
-  else {
-    HEAP_SIZE = 100000;
-  }
-  HEAP = (int*)calloc(HEAP_SIZE, sizeof (int));
-  HEAP_END = HEAP + HEAP_SIZE;
+    /*HEAP_SIZE = argc > 1 ? atoi(argv[1]) : 4096;*/
+    if(argc > 1) {
+      HEAP_SIZE = atoi(argv[1]);
+    }
+    else {
+      HEAP_SIZE = 4096;
+    }
+    HEAP = (int*)calloc(HEAP_SIZE, sizeof (int));
+    HEAP_END = HEAP + HEAP_SIZE;
 
-  int result = our_code_starts_here(HEAP);
+    int result = our_code_starts_here(HEAP);
 
-  print(result);
-  return 0;
+    print(result);
+    /*naive_print_heap(HEAP, 16);*/
+    return 0;
 }
 
 int equal(int a, int b)
@@ -157,8 +149,8 @@ void printHelp(FILE *out, int val) {
     int* addr = (int*)(val - 1);
     // Check whether we've visited this tuple already
     if ((*addr & 0x80000000) != 0) {
-      fprintf(out, "<cyclic tuple %d>", (int)(*addr & 0x7FFFFFFF));
-      return;
+      fprintf(out, "<cyclic tuple %p>", (int)(*addr & 0x7FFFFFFE));
+      /*return;*/
     }
     // Mark this tuple: save its length locally, then mark it
     int len = addr[0];

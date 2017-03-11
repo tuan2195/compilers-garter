@@ -211,9 +211,15 @@ let tests = [
 
   te "e_num_1" "let x = 1073741824 in x" "The number literal 1073741824, used at <e_num_1, 1:8-1:18>, is not supported in this language";
   te "e_num_2" "let x = -1073741825 in x" "The number literal -1073741825, used at <e_num_2, 1:8-1:19>, is not supported in this language";
-
 ]
 
+let dut = [
+  t "tup_1" "let x = (3, 4), y = (5, 6, 7, 8, 9) in y[x[1]]" "9";
+  t "tup_20" "let x = ((0, false), (1, true), (2, (true, false))) in
+              begin x[0][1] := true; x[2][1][0] := false; x[1] := 5; x end"
+             "((0, true), 5, (2, (false, false)))";
+  t "tup_21" "let x = (1, 2, 3, 4, 5, 6) in begin x[x[x[x[x[x[0]]]]]] := 9; x end" "(1, 2, 3, 4, 5, 9)";
+]
 let suite =
 "suite">:::tests
  (*pair_tests @ oom @ gc*)
