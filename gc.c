@@ -30,6 +30,8 @@ void smarter_print_heap(int* from_start, int* from_end, int* to_start, int* to_e
     If the data needed to be copied, then this replaces the value at its old location
     with a forwarding pointer to its new location
  */
+
+#define FORWARD_TAG 0x80000000
 int* copy_if_needed(int* garter_val_addr, int* heap_top) {
     int val = *garter_val_addr;
 
@@ -41,11 +43,17 @@ int* copy_if_needed(int* garter_val_addr, int* heap_top) {
     {
         // Function
         int* addr = (int*)(val - FUNC_TAG);
+        if ((*addr & FORWARD_TAG) != 0)
+        {
+            *garter_val_addr = (void*)(*addr) - FORWARD_TAG;
+            return heap_top;
+        }
         int size = addr[2];
         int* old_top = heap_top;
         for(int i = 0; i < size; ++i)
             heap_top[i] = addr[i];
         *garter_val_addr = (int*)((void*)heap_top + FUNC_TAG);
+        *addr = (int*)((*garter_val_addr) | FORWARD_TAG);
         heap_top += size;
         for(int i = 3; i < size; ++i)
             heap_top = copy_if_needed(&old_top[i], heap_top);
@@ -54,12 +62,17 @@ int* copy_if_needed(int* garter_val_addr, int* heap_top) {
     else if ((val & BIT3_MASK) != 0) // Tuple
     {
         int* addr = (int*)(val - TUPLE_TAG);
-        int size = addr[0];
-        size += (size % 2) ? 1 : 2; // Padding
+        if ((*addr & FORWARD_TAG) != 0)
+        {
+            *garter_val_addr = (void*)(*addr) - FORWARD_TAG;
+            return heap_top;
+        }
+        const int size = (*addr) + (((*addr) % 2) ? 1 : 2); // Padding
         int* old_top = heap_top;
         for(int i = 0; i < size; ++i)
             heap_top[i] = addr[i];
         *garter_val_addr = (int*)((void*)heap_top + TUPLE_TAG);
+        *addr = (int*)((*garter_val_addr) | FORWARD_TAG);
         heap_top += size;
         for(int i = 1; i < size; ++i)
             heap_top = copy_if_needed(&old_top[i], heap_top);
@@ -89,20 +102,22 @@ int* copy_if_needed(int* garter_val_addr, int* heap_top) {
 int* gc(int* bottom_frame, int* top_frame, int* top_stack, int* from_start, int* from_end, int* to_start) {
   /*printf("gc bot = %p top_frame = %p top_stack = %p from_start = %p from_end = %p to_start = %p\n",*/
           /*bottom_frame, top_frame, top_stack, from_start, from_end, to_start);*/
-  fflush(stdout);
+  /*fflush(stdout);*/
 
-  for (int* cur_word = bottom_frame; cur_word >= top_stack; --cur_word)
-  {
+  /*for (int* cur_word = bottom_frame; cur_word >= top_stack; --cur_word)*/
+    /*to_start = copy_if_needed(cur_word, to_start);*/
+
+  for (int* cur_word = top_frame-1; cur_word >= top_stack; --cur_word)
     to_start = copy_if_needed(cur_word, to_start);
-  }
-  /*if (top_frame < bottom_frame)*/
-    /*to_start = gc(bottom_frame,*/
-                  /*(int*)(*top_frame), // [top_frame] points to the saved EBP, which is the next stack frame*/
-                  /*top_frame + 2,      // [top_frame+4] points to the return address*/
-                                      /*// so [top_frame+8] is the next frame's stack-top*/
-                  /*from_start,*/
-                  /*from_end,*/
-                  /*to_start); // to_start has been changed to include any newly copied data*/
+
+  if (top_frame < bottom_frame)
+    to_start = gc(bottom_frame,
+                  (int*)(*top_frame), // [top_frame] points to the saved EBP, which is the next stack frame
+                                      // [top_frame+4] points to the return address
+                  top_frame + 2,      // [top_frame+8] is the next frame's stack-top
+                  from_start,
+                  from_end,
+                  to_start); // to_start has been changed to include any newly copied data
   // after copying the remaining stack frames, return the new allocation starting point
   return to_start;
 }

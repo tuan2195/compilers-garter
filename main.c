@@ -37,7 +37,7 @@ extern int* STACK_BOTTOM asm("STACK_BOTTOM");
 
 // Do you trust your new GC?
 /*#define DONT_USE_GC*/
-#define DEBUG
+/*#define DEBUG*/
 #define BIG_SIZE 24
 #define SMALL_SIZE 16
 

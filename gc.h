@@ -4,8 +4,8 @@
 #define GC_H
 
 #define NUM_TAG_MASK   0x00000001
-#define FUNC_TAG       0x00000005
 #define TUPLE_TAG      0x00000001
+#define FUNC_TAG       0x00000005
 #define BIT3_MASK      0x00000007
 #define BOOL_TRUE      0xFFFFFFFF
 #define BOOL_FALSE     0x7FFFFFFF
