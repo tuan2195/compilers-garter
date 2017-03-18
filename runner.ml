@@ -25,6 +25,15 @@ let parse name lexbuf =
   |  Failure "lexing: empty token" ->
       failwith (sprintf "lexical error at %s"
                         (string_of_position lexbuf.lex_curr_p))
+  | Parsing.Parse_error ->
+     begin
+       let curr = lexbuf.Lexing.lex_curr_p in
+       let line = curr.Lexing.pos_lnum in
+       let cnum = curr.Lexing.pos_cnum - curr.Lexing.pos_bol in
+       let tok = Lexing.lexeme lexbuf in
+       failwith (sprintf "Parse error at line %d, col %d: token %s"
+                         line cnum tok)
+     end
 
 let parse_string name s = 
   let lexbuf = Lexing.from_string s in

@@ -36,7 +36,7 @@ extern int* STACK_BOTTOM asm("STACK_BOTTOM");
 */
 
 // Do you trust your new GC?
-/*#define DONT_USE_GC*/
+/*#define DISABLE_GC*/
 /*#define DEBUG*/
 #define BIG_SIZE 24
 #define SMALL_SIZE 16
@@ -67,17 +67,17 @@ int* try_gc(int* alloc_ptr, int bytes_needed, int* cur_frame, int* cur_stack_top
     exit(ERR_OUT_OF_MEMORY);
   }
 
-  // When you're confident in your collector, enable the following lines to trigger your GC
-#ifndef DONT_USE_GC
-    new_esi = gc(STACK_BOTTOM, cur_frame, cur_stack_top, HEAP, HEAP_END, new_heap);
-    HEAP = new_heap;
-    HEAP_END = new_heap_end;
-    free(old_heap);
-#else
+#ifdef DISABLE_GC
     // This just keeps ESI where it is, and cleans up after the unneeded allocation
     free(new_heap);
     new_heap = NULL;
     new_esi = alloc_ptr;
+#else
+    // When you're confident in your collector, enable the following lines to trigger your GC
+    new_esi = gc(STACK_BOTTOM, cur_frame, cur_stack_top, HEAP, HEAP_END, new_heap);
+    HEAP = new_heap;
+    HEAP_END = new_heap_end;
+    free(old_heap);
 #endif
 
   // Note: strict greater-than is correct here: if new_esi + (bytes_needed / 4) == HEAP_END,

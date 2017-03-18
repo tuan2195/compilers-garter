@@ -9,7 +9,7 @@ ifeq ($(UNAME), Darwin)
 endif
 endif
 
-PKGS=oUnit,extlib,unix
+PKGS=oUnit,extlib,unix,batteries
 BUILD=ocamlbuild -r -use-ocamlfind
 
 main: *.ml parser.mly lexer.mll
@@ -42,8 +42,10 @@ gc.o: gc.c gc.h
 # gctest: gctest.o gc.o cutest-1.5/CuTest.o cutest-1.5/CuTest.h
 # 	gcc -m32 cutest-1.5/AllTests.c cutest-1.5/CuTest.o gctest.o gc.o -o gctest
 
-
 clean:
 	rm -rf output/*.o output/*.s output/*.dSYM output/*.run *.log *.o
 	rm -rf _build/
 	rm -f main test
+
+zip: clean
+	dir=`basename $$PWD`; cd ..; rm $$dir.zip; zip -r $$dir.zip ./$$dir -x *.git*

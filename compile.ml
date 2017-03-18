@@ -3,6 +3,7 @@ open Printf
 open Instruction
 open Expr
 open Pretty
+open BatUref
 
 (* Add or change these constants as needed *)
 let err_COMP_NOT_NUM   = 1
@@ -29,7 +30,8 @@ let rec is_anf (e : 'a expr) : bool =
   | EPrim1(_, e, _) -> is_imm e
   | EPrim2(_, e1, e2, _) -> is_imm e1 && is_imm e2
   | ELet(binds, body, _) ->
-     List.for_all (fun (_, e, _) -> is_anf e) binds
+     List.for_all (fun (_, _, e, _) -> is_anf e) binds
+     (*List.for_all (fun (_, e, _) -> is_anf e) binds*)
      && is_anf body
   | EIf(cond, thn, els, _) -> is_imm cond && is_anf thn && is_anf els
   | _ -> is_imm e
@@ -41,21 +43,20 @@ and is_imm e =
   | _ -> false
 ;;
 
-
 (* FINISH THIS FUNCTION WITH THE WELL-FORMEDNESS FROM FER-DE-LANCE *)
 let well_formed (p : (Lexing.position * Lexing.position) program) builtins : exn list =
   let rec wf_E e (env : sourcespan envt) =
     let rec dupe x binds =
         match binds with
         | [] -> None
-        | (y, _, pos)::_ when x = y -> Some pos
+        | (y, _, _, pos)::_ when x = y -> Some pos
         | _::rest -> dupe x rest in
     match e with
     | ELet(binds, body, _) ->
         let rec process_binds rem_binds env =
             match rem_binds with
             | [] -> (env, [])
-            | (x, e, pos)::rest ->
+            | (x, s, e, pos)::rest ->
                 let shadow = match dupe x rest with
                     | Some where -> [DuplicateId(x, where, pos)]
                     | None ->
@@ -72,12 +73,12 @@ let well_formed (p : (Lexing.position * Lexing.position) program) builtins : exn
         let rec build_env b =
             match b with
             | [] -> []
-            | (x, _, pos)::rest -> (x, pos)::build_env rest in
+            | (x, _, _, pos)::rest -> (x, pos)::build_env rest in
         let new_env = env @ build_env binds in
         let rec process_binds rem_binds =
             match rem_binds with
             | [] -> []
-            | (x, e, pos)::rest ->
+            | (x, s, e, pos)::rest ->
                 match e with
                 | ELambda _ ->
                     let shadow = match dupe x rest with
@@ -107,6 +108,8 @@ let well_formed (p : (Lexing.position * Lexing.position) program) builtins : exn
     | ETuple(vals, _) -> List.concat (List.map (fun e -> wf_E e env) vals)
     | EGetItem(tup, idx, _) -> wf_E tup env @ wf_E idx env
     | ESetItem(tup, idx, rhs, _) -> wf_E tup env @ wf_E idx env @ wf_E rhs env
+    | EGetItemExact(tup, idx, _) -> wf_E tup env
+    | ESetItemExact(tup, idx, rhs, _) -> wf_E tup env @ wf_E rhs env
     | ESeq(stmts, _) -> List.flatten (List.map (fun s -> wf_E s env) stmts)
     | ELambda(args, body, _) ->
        wf_E body (args @ env)
@@ -142,12 +145,12 @@ let anf (p : tag program) : unit aprogram =
        let (rest_ans, rest_setup) = helpC (ESeq(rest, tag)) in
        (rest_ans, fst_setup @ [BSeq fst_ans] @ rest_setup)
     | ELet([], body, _) -> helpC body
-    | ELet((bind, exp, _)::rest, body, pos) ->
+    | ELet((bind, scheme, exp, _)::rest, body, pos) ->
        let (exp_ans, exp_setup) = helpC exp in
        let (body_ans, body_setup) = helpC (ELet(rest, body, pos)) in
        (body_ans, exp_setup @ [BLet (bind, exp_ans)] @ body_setup)
     | ELetRec(binds, body, _) ->
-       let (names, new_binds_setup) = List.split (List.map (fun (name, rhs, _) -> (name, helpC rhs)) binds) in
+       let (names, new_binds_setup) = List.split (List.map (fun (name, schm, rhs, _) -> (name, helpC rhs)) binds) in
        let (new_binds, new_setup) = List.split new_binds_setup in
        let (body_ans, body_setup) = helpC body in
        (body_ans, (BLetRec (List.combine names new_binds)) :: body_setup)
@@ -169,8 +172,14 @@ let anf (p : tag program) : unit aprogram =
        let (idx_imm, idx_setup) = helpI idx in
        let (rhs_imm, rhs_setup) = helpI rhs in
        (CSetItem(tup_imm, idx_imm, rhs_imm, ()), tup_setup @ idx_setup @ rhs_setup)
+    | EGetItemExact(tup, idx, _) ->
+       let (tup_imm, tup_setup) = helpI tup in
+       (CGetItem(tup_imm, ImmNum(idx, ()), ()), tup_setup)
+    | ESetItemExact(tup, idx, rhs, _) ->
+       let (tup_imm, tup_setup) = helpI tup in
+       let (rhs_imm, rhs_setup) = helpI rhs in
+       (CSetItem(tup_imm, ImmNum(idx, ()), rhs_imm, ()), tup_setup @ rhs_setup)
     | _ -> let (imm, setup) = helpI e in (CImmExpr imm, setup)
-
   and helpI (e : tag expr) : (unit immexpr * unit anf_bind list) =
     match e with
     | ENumber(n, _) -> (ImmNum(n, ()), [])
@@ -202,13 +211,13 @@ let anf (p : tag program) : unit aprogram =
        let (rest_ans, rest_setup) = helpI (ESeq(rest, tag)) in
        (rest_ans, fst_setup @ [BSeq fst_ans] @ rest_setup)
     | ELet([], body, _) -> helpI body
-    | ELet((bind, exp, _)::rest, body, pos) ->
+    | ELet((bind, scheme, exp, _)::rest, body, pos) ->
        let (exp_ans, exp_setup) = helpC exp in
        let (body_ans, body_setup) = helpI (ELet(rest, body, pos)) in
        (body_ans, exp_setup @ [BLet(bind, exp_ans)] @ body_setup)
     | ELetRec(binds, body, tag) ->
        let tmp = sprintf "lam_%d" tag in
-       let (names, new_binds_setup) = List.split (List.map (fun (name, rhs, _) -> (name, helpC rhs)) binds) in
+       let (names, new_binds_setup) = List.split (List.map (fun (name, schm, rhs, _) -> (name, helpC rhs)) binds) in
        let (new_binds, new_setup) = List.split new_binds_setup in
        let (body_ans, body_setup) = helpC body in
        (ImmId(tmp, ()), (List.concat new_setup)
@@ -233,16 +242,17 @@ let anf (p : tag program) : unit aprogram =
        let (idx_imm, idx_setup) = helpI idx in
        let (rhs_imm, rhs_setup) = helpI rhs in
        (ImmId(tmp, ()), tup_setup @ idx_setup @ rhs_setup @ [BLet(tmp, CSetItem(tup_imm, idx_imm, rhs_imm, ()))])
+    | EGetItemExact(tup, idx, tag) ->
+       let tmp = sprintf "get_%d" tag in
+       let (tup_imm, tup_setup) = helpI tup in
+       (ImmId(tmp, ()), tup_setup @ [BLet(tmp, CGetItem(tup_imm, ImmNum(idx, ()), ()))])
+    | ESetItemExact(tup, idx, rhs, tag) ->
+       let tmp = sprintf "set_%d" tag in
+       let (tup_imm, tup_setup) = helpI tup in
+       let (rhs_imm, rhs_setup) = helpI rhs in
+       (ImmId(tmp, ()), tup_setup @ rhs_setup @ [BLet(tmp, CSetItem(tup_imm, ImmNum(idx, ()), rhs_imm, ()))])
   and helpA e : unit aexpr =
     let (ans, ans_setup) = helpC e in
-    (*List.fold_left*)
-      (*(fun body bind ->*)
-        (*match bind with*)
-        (*| BSeq(exp) -> ASeq(exp, body, ())*)
-        (*| BLet(name, exp) -> ALet(name, exp, body, ())*)
-        (*| BLetRec(names) -> ALetRec(names, body, ()))*)
-      (*(ACExpr ans)*)
-      (*ans_setup*)
     List.fold_right
       (fun bind body ->
         match bind with
@@ -253,6 +263,112 @@ let anf (p : tag program) : unit aprogram =
       (ACExpr ans)
   in
   helpP p
+;;
+
+(* Type checking *)
+
+let rec free_typ_tyvars typ =
+  match typ with
+  | TyCon _ -> []
+  | TyVar s -> [s]
+  | TyArr(args, ret) -> List.concat (List.map free_typ_tyvars (args @ [ret]))
+  | TyTup(args) -> List.concat (List.map free_typ_tyvars args)
+and free_scheme_tyvars (args, typ) =
+  List.fold_left ExtList.List.remove (List.sort_uniq String.compare (free_typ_tyvars typ)) args
+;;
+(* A unification is a dictionary mapping type variable names to
+   unifiables (from the BatUref library) containing types.
+ *)
+type unification = (typ uref) envt;;
+
+(* The function bind ensures that we can't have infinite types (e.g., by trying to equate
+   X with [X -> Y]), and produces a small unification environment containing this single
+   type variable, if this occurs check passes. *)
+exception OccursCheck of string
+let bind (tyvarname : string) (t : typ) : unification =
+  match t with
+  | TyVar name when tyvarname = name -> [] (* nothing to be done *)
+  | _ ->
+     if List.mem tyvarname (free_typ_tyvars t)
+     then raise (OccursCheck (sprintf "Infinite types: %s occurs in %s" tyvarname (string_of_typ t)))
+     else [tyvarname, uref t] (* make a unification containing just this one type variable, mapped to t *)
+
+(* Unify takes two types, and a unification describing the known equalities among types,
+   and tries to unify the two types.
+
+   If the first type is a TyVar, unify it with the second type.
+   If the second type is a TyVar, unify it with the first.
+
+   If both types are TyCons, and the same type constant, then unification succeeds.
+
+   If both are TyArrs of the same arity, recur on the pieces and unify them.
+
+   If both are TyTups of the same arity, recur on the pieces and unify them.
+
+   Otherwise, raise a type error explaining the mismatch.
+
+   Return the unification, especially if it's been modified...
+*)
+exception TypeError of string
+let unify (t1 : typ) (t2 : typ) (unif_env : unification) : unification =
+  match t1, t2 with
+  | TyVar n1, _ when not(List.mem_assoc n1 unif_env) ->
+     (bind n1 t2) @ unif_env
+  | _, TyVar n2 when not(List.mem_assoc n2 unif_env) ->
+     (bind n2 t1) @ unif_env
+  | TyVar n1, TyVar n2 ->
+     let n1_ref = List.assoc n1 unif_env in
+     let n2_ref = List.assoc n2 unif_env in
+     let choose_new_representative t1 t2 =
+       (* When we get inside this function, we're effectively producing a
+          new type equality asserting `t1 = t2`, but as we discussed in class,
+          we need to pick a preferred direction to rewrite that equality,
+          either saying "Rewrite t1 as t2", or "Rewrite t2 as t1".  If this function
+          returns t2, for example, then we're choosing the first direction,
+          "Rewrite t1 as t2".  You need to implement this function to choose the
+          correct direction, depending on what the types are. *)
+       t1 in
+     unite ~sel:choose_new_representative n1_ref n2_ref;
+     unif_env
+  | _ -> failwith "NYI"
+
+
+let rec type_check gamma exp typ : bool =
+  match exp with
+  | ELet(binds, body, _) -> failwith "NYI"
+  | ELetRec(binds, body, _) -> failwith "NYI"
+  | EPrim1(op, exp, _) -> failwith "NYI"
+  | EPrim2(op, left, right, _) -> failwith "NYI"
+  | EIf(cond, thn, els, _) -> failwith "NYI"
+  | ETuple(exps, _) -> failwith "NYI"
+  | EGetItem(tup, idx, _) -> failwith "NYI"
+  | ESetItem(tup, idx, value, _) -> failwith "NYI"
+  | EGetItemExact(tup, idx, _) -> failwith "NYI"
+  | ESetItemExact(tup, idx, value, _) -> failwith "NYI"
+  | ENumber(_, _) -> failwith "NYI"
+  | EBool(_, _) -> failwith "NYI"
+  | EId(name, _) -> failwith "NYI"
+  | EApp(func, args, _) -> failwith "NYI"
+  | ELambda(args, body, _) -> failwith "NYI"
+  | ESeq(exps, _) -> failwith "NYI"
+and type_infer gamma exp : scheme =
+  match exp with
+  | ELet(binds, body, _) -> failwith "NYI"
+  | ELetRec(binds, body, _) -> failwith "NYI"
+  | EPrim1(op, exp, _) -> failwith "NYI"
+  | EPrim2(op, left, right, _) -> failwith "NYI"
+  | EIf(cond, thn, els, _) -> failwith "NYI"
+  | ETuple(exps, _) -> failwith "NYI"
+  | EGetItem(tup, idx, _) -> failwith "NYI"
+  | ESetItem(tup, idx, value, _) -> failwith "NYI"
+  | EGetItemExact(tup, idx, _) -> failwith "NYI"
+  | ESetItemExact(tup, idx, value, _) -> failwith "NYI"
+  | ENumber(_, _) -> failwith "NYI"
+  | EBool(_, _) -> failwith "NYI"
+  | EId(name, _) -> failwith "NYI"
+  | EApp(func, args, _) -> failwith "NYI"
+  | ELambda(args, body, _) -> failwith "NYI"
+  | ESeq(exps, _) -> failwith "NYI"
 ;;
 
 

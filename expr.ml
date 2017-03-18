@@ -23,10 +23,10 @@ let tag (p : 'a program) : tag program =
        ESeq(List.map helpE stmts, seq_tag)
     | ELet(binds, body, _) ->
        let let_tag = tag() in
-       ELet(List.map (fun (x, b, _) -> let t = tag() in (x, helpE b, t)) binds, helpE body, let_tag)
+       ELet(List.map (fun (x, topt, b, _) -> let t = tag() in (x, topt, helpE b, t)) binds, helpE body, let_tag)
     | ELetRec(binds, body, _) ->
        let let_tag = tag() in
-       ELetRec(List.map (fun (x, b, _) -> let t = tag() in (x, helpE b, t)) binds, helpE body, let_tag)
+       ELetRec(List.map (fun (x, topt, b, _) -> let t = tag() in (x, topt, helpE b, t)) binds, helpE body, let_tag)
     | EIf(cond, thn, els, _) ->
        let if_tag = tag() in
        EIf(helpE cond, helpE thn, helpE els, if_tag)
@@ -39,6 +39,12 @@ let tag (p : 'a program) : tag program =
     | ESetItem(tup, idx, rhs, _) ->
        let get_tag = tag() in
        ESetItem(helpE tup, helpE idx, helpE rhs, get_tag)
+    | EGetItemExact(tup, idx, _) ->
+       let get_tag = tag() in
+       EGetItemExact(helpE tup, idx, get_tag)
+    | ESetItemExact(tup, idx, rhs, _) ->
+       let get_tag = tag() in
+       ESetItemExact(helpE tup, idx, helpE rhs, get_tag)
     | EApp(func, args, _) ->
        let app_tag = tag() in
        EApp(helpE func, List.map helpE args, app_tag)
@@ -61,9 +67,9 @@ let rec untag (p : 'a program) : unit program =
     | ESeq(stmts, _) ->
        ESeq(List.map helpE stmts, ())
     | ELet(binds, body, _) ->
-       ELet(List.map(fun (x, b, _) -> (x, helpE b, ())) binds, helpE body, ())
+       ELet(List.map(fun (x, topt, b, _) -> (x, topt, helpE b, ())) binds, helpE body, ())
     | ELetRec(binds, body, _) ->
-       ELetRec(List.map(fun (x, b, _) -> (x, helpE b, ())) binds, helpE body, ())
+       ELetRec(List.map(fun (x, topt, b, _) -> (x, topt, helpE b, ())) binds, helpE body, ())
     | EIf(cond, thn, els, _) ->
        EIf(helpE cond, helpE thn, helpE els, ())
     | ETuple(vals, _) ->
@@ -72,6 +78,10 @@ let rec untag (p : 'a program) : unit program =
        EGetItem(helpE tup, helpE idx, ())
     | ESetItem(tup, idx, rhs, _) ->
        ESetItem(helpE tup, helpE idx, helpE rhs, ())
+    | EGetItemExact(tup, idx, _) ->
+       EGetItemExact(helpE tup, idx, ())
+    | ESetItemExact(tup, idx, rhs, _) ->
+       ESetItemExact(helpE tup, idx, helpE rhs, ())
     | EApp(name, args, _) ->
        EApp(name, List.map helpE args, ())
     | ELambda(args, body, _) ->

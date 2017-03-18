@@ -1,12 +1,22 @@
 %{
 open Types
 
+let elaborate_schema foralls typ =
+  let rec help typ =
+    match typ with
+    | TyVar _ -> typ
+    | TyCon name -> if List.mem name foralls then TyVar name else typ
+    | TyArr(args, ret) -> TyArr(List.map help args, help ret)
+    | TyTup(args) -> TyTup(List.map help args)
+  in (foralls, help typ)
+;;
 %}
 
 %token <int> NUM
 %token <string> ID
-%token LBRACK RBRACK DEF ADD1 SUB1 LPAREN RPAREN LET REC IN EQUAL COMMA PLUS MINUS TIMES IF COLON ELSECOLON TRUE FALSE ISBOOL ISNUM ISTUPLE LAMBDA EQEQ LESS GREATER PRINT PRINTSTACK EOF LESSEQ GREATEREQ AND OR NOT GETS BEGIN END SEMI
+%token LBRACK RBRACK DEF ADD1 SUB1 LPAREN RPAREN LET REC IN EQUAL COMMA PLUS MINUS TIMES IF COLON ELSECOLON TRUE FALSE ISBOOL ISNUM ISTUPLE LAMBDA EQEQ LESS GREATER PRINT PRINTSTACK EOF LESSEQ GREATEREQ AND OR NOT GETS BEGIN END SEMI ARROW
 
+%left LPAREN
 %left PLUS MINUS TIMES GREATER LESS EQEQ LESSEQ GREATEREQ AND OR
 
 
@@ -32,8 +42,25 @@ prim1 :
   | PRINTSTACK { PrintStack }
 
 binds :
-  | ID EQUAL expr { [($1, $3, (Parsing.rhs_start_pos 1, Parsing.rhs_end_pos 1))] }
-  | ID EQUAL expr COMMA binds { ($1, $3, (Parsing.rhs_start_pos 1, Parsing.rhs_end_pos 1))::$5 }
+  | ID tyann EQUAL expr { [($1, $2, $4, (Parsing.rhs_start_pos 1, Parsing.rhs_end_pos 1))] }
+  | ID tyann EQUAL expr COMMA binds { ($1, $2, $4, (Parsing.rhs_start_pos 1, Parsing.rhs_end_pos 1))::$6 }
+
+tyann :
+  | { None }
+  | COLON schema { Some $2 }
+
+schema :
+  | LBRACK ids RBRACK typ { elaborate_schema (List.map fst $2) $4 }
+  | typ { elaborate_schema [] $1 }
+
+typ :
+  | ID { TyCon $1 }
+  | LPAREN typ typs ARROW typ RPAREN { TyArr($2::$3, $5) }
+  | LPAREN typ typs RPAREN { TyTup ($2::$3) }
+
+typs :
+  | { [] }
+  | COMMA typ typs { $2 :: $3 }
 
 ids :
   | ID { [$1, (Parsing.symbol_start_pos (), Parsing.symbol_end_pos ())] }
@@ -47,6 +74,9 @@ tuple_exprs :
   | expr COMMA { [$1] }
   | expr COMMA exprs { $1::$3 }
 
+colon_num:
+  | COLON NUM COLON { $2 }
+
 simple_expr :
   | prim1 LPAREN expr RPAREN { EPrim1($1, $3, (Parsing.symbol_start_pos (), Parsing.symbol_end_pos ())) }
   | LPAREN tuple_exprs RPAREN { ETuple($2, (Parsing.symbol_start_pos (), Parsing.symbol_end_pos ())) }
@@ -55,8 +85,10 @@ simple_expr :
   | simple_expr LPAREN RPAREN { EApp($1, [], (Parsing.symbol_start_pos (), Parsing.symbol_end_pos ())) }
   | LPAREN LAMBDA ids COLON expr RPAREN { ELambda($3, $5, (Parsing.symbol_start_pos (), Parsing.symbol_end_pos ())) }
   | LPAREN LAMBDA COLON expr RPAREN { ELambda([], $4, (Parsing.symbol_start_pos (), Parsing.symbol_end_pos ())) }
-  | simple_expr LBRACK binop_expr RBRACK { EGetItem($1, $3, (Parsing.symbol_start_pos (), Parsing.symbol_end_pos ())) }
-  | simple_expr LBRACK binop_expr RBRACK GETS binop_expr { ESetItem($1, $3, $6, (Parsing.symbol_start_pos (), Parsing.symbol_end_pos ())) }
+  | simple_expr LBRACK expr RBRACK { EGetItem($1, $3, (Parsing.symbol_start_pos (), Parsing.symbol_end_pos ())) }
+  | simple_expr LBRACK expr RBRACK GETS expr { ESetItem($1, $3, $6, (Parsing.symbol_start_pos (), Parsing.symbol_end_pos ())) }
+  | simple_expr LBRACK colon_num RBRACK { EGetItemExact($1, $3, (Parsing.symbol_start_pos (), Parsing.symbol_end_pos ())) }
+  | simple_expr LBRACK colon_num RBRACK GETS expr { ESetItemExact($1, $3, $6, (Parsing.symbol_start_pos (), Parsing.symbol_end_pos ())) }
   | BEGIN block_exprs END { ESeq($2, (Parsing.symbol_start_pos (), Parsing.symbol_end_pos ())) }
   | const { $1 }
   | ID { EId($1, (Parsing.symbol_start_pos (), Parsing.symbol_end_pos ())) }

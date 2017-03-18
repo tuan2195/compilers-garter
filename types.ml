@@ -40,7 +40,15 @@ type prim2 =
   | And
   | Or
 
-type 'a bind = (string * 'a expr * 'a)
+type typ =
+  | TyCon of string (* things like Int or Bool *)
+  | TyVar of string (* things like X or Y *)
+  | TyArr of typ list * typ (* t1 t2 ... -> t_ret *)
+  | TyTup of typ list (* (t1, t2, ..., tn) *)
+
+type scheme = (string list * typ) (* Forall X, Y, ..., typ *)
+
+type 'a bind = (string * scheme option * 'a expr * 'a)
 
 and 'a expr =
   | ELet of 'a bind list * 'a expr * 'a
@@ -51,6 +59,8 @@ and 'a expr =
   | ETuple of 'a expr list * 'a
   | EGetItem of 'a expr * 'a expr * 'a
   | ESetItem of 'a expr * 'a expr * 'a expr * 'a
+  | EGetItemExact of 'a expr * int * 'a
+  | ESetItemExact of 'a expr * int * 'a expr * 'a
   | ENumber of int * 'a
   | EBool of bool * 'a
   | EId of string * 'a
@@ -79,4 +89,5 @@ and 'a aexpr = (* anf expressions *)
   | ALetRec of (string * 'a cexpr) list * 'a aexpr * 'a
   | ASeq of 'a cexpr * 'a aexpr * 'a
   | ACExpr of 'a cexpr
+
 and 'a aprogram = 'a aexpr
