@@ -185,7 +185,6 @@ let anf (p : tag program) : unit aprogram =
     | ENumber(n, _) -> (ImmNum(n, ()), [])
     | EBool(b, _) -> (ImmBool(b, ()), [])
     | EId(name, _) -> (ImmId(name, ()), [])
-
     | EPrim1(op, arg, tag) ->
        let tmp = sprintf "unary_%d" tag in
        let (arg_imm, arg_setup) = helpI arg in
@@ -279,6 +278,7 @@ and free_scheme_tyvars (args, typ) =
 (* A unification is a dictionary mapping type variable names to
    unifiables (from the BatUref library) containing types.
  *)
+(*type 'a envt = (string * 'a) list*)
 type unification = (typ uref) envt;;
 
 (* The function bind ensures that we can't have infinite types (e.g., by trying to equate
@@ -303,35 +303,44 @@ let bind (tyvarname : string) (t : typ) : unification =
 
    If both are TyArrs of the same arity, recur on the pieces and unify them.
 
-   If both are TyTups of the same arity, recur on the pieces and unify them.
+   If both are TyTup of the same arity, recur on the pieces and unify them.
 
    Otherwise, raise a type error explaining the mismatch.
 
    Return the unification, especially if it's been modified...
 *)
 exception TypeError of string
-let unify (t1 : typ) (t2 : typ) (unif_env : unification) : unification =
-  match t1, t2 with
-  | TyVar n1, _ when not(List.mem_assoc n1 unif_env) ->
-     (bind n1 t2) @ unif_env
-  | _, TyVar n2 when not(List.mem_assoc n2 unif_env) ->
-     (bind n2 t1) @ unif_env
-  | TyVar n1, TyVar n2 ->
-     let n1_ref = List.assoc n1 unif_env in
-     let n2_ref = List.assoc n2 unif_env in
-     let choose_new_representative t1 t2 =
-       (* When we get inside this function, we're effectively producing a
-          new type equality asserting `t1 = t2`, but as we discussed in class,
-          we need to pick a preferred direction to rewrite that equality,
-          either saying "Rewrite t1 as t2", or "Rewrite t2 as t1".  If this function
-          returns t2, for example, then we're choosing the first direction,
-          "Rewrite t1 as t2".  You need to implement this function to choose the
-          correct direction, depending on what the types are. *)
-       t1 in
-     unite ~sel:choose_new_representative n1_ref n2_ref;
-     unif_env
-  | _ -> failwith "NYI"
-
+(*let rec unify (unif_env : unification) (t1 : typ) (t2 : typ) : unification =*)
+let rec unify unif_env t1 t2 =
+    match t1, t2 with
+    | TyCon n1, TyCon n2 ->
+       if n1 = n2 then unif_env
+       else raise (TypeError "Unifying two different value TyCons")
+    | TyVar n1, _ when not(List.mem_assoc n1 unif_env) ->
+       (bind n1 t2) @ unif_env
+    | _, TyVar n2 when not(List.mem_assoc n2 unif_env) ->
+       (bind n2 t1) @ unif_env
+    | TyVar n1, TyVar n2 ->
+       let n1_ref = List.assoc n1 unif_env in
+       let n2_ref = List.assoc n2 unif_env in
+       let choose_new_representative t1 t2 =
+         (* When we get inside this function, we're effectively producing a
+            new type equality asserting `t1 = t2`, but as we discussed in class,
+            we need to pick a preferred direction to rewrite that equality,
+            either saying "Rewrite t1 as t2", or "Rewrite t2 as t1".  If this function
+            returns t2, for example, then we're choosing the first direction,
+            "Rewrite t1 as t2".  You need to implement this function to choose the
+            correct direction, depending on what the types are. *)
+         t1 in
+       unite ~sel:choose_new_representative n1_ref n2_ref;
+       unif_env
+    | TyTup l1, TyTup l2 ->
+       (try List.fold_left2 unify unif_env l1 l2 with
+       | _ -> raise (TypeError "Unifying two different arity TyTups"))
+    | TyArr(l1, r1), TyArr(l2, r2) ->
+       (try unify (List.fold_left2 unify unif_env l1 l2) r1 r2 with
+       | _ -> raise (TypeError "Unifying two different arity TyArrs"))
+    | _ -> raise (TypeError "Unifying something that is not allowed")
 
 let rec type_check gamma exp typ : bool =
   match exp with
@@ -363,12 +372,12 @@ and type_infer gamma exp : scheme =
   | ESetItem(tup, idx, value, _) -> failwith "NYI"
   | EGetItemExact(tup, idx, _) -> failwith "NYI"
   | ESetItemExact(tup, idx, value, _) -> failwith "NYI"
-  | ENumber(_, _) -> failwith "NYI"
-  | EBool(_, _) -> failwith "NYI"
+  | ENumber(_, _) -> (["bool"], TyCon "bool")
+  | EBool(_, _) -> (["int"], TyCon "int")
   | EId(name, _) -> failwith "NYI"
   | EApp(func, args, _) -> failwith "NYI"
   | ELambda(args, body, _) -> failwith "NYI"
-  | ESeq(exps, _) -> failwith "NYI"
+  | ESeq(exps, _) -> type_infer gamma (List.hd (List.rev exps))
 ;;
 
 

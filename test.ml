@@ -216,28 +216,10 @@ let tests = [
 ]
 
 let dut = [
-  t "ll_1" "let rec length = (lambda l: length_rec(l, 0)),
-            length_rec = (lambda l, acc: if l == false: acc else: length_rec(l[1], acc + 1)) in
-            length((0, (1, (2, (3, (4, (5, (6, (7, (8, (9, false)))))))))))"
-            "10";
-  t "f1" "let sq = (lambda x: x * x), ten = (lambda: 10) in sq(ten())" "100";
-  t "f2" "let sub = (lambda x, y: x - y) in sub(8, 6)" "2";
-  t "f3" "let f = (lambda x,y,z: x*y+z),
-          g = (lambda x,y: x+y),
-          h = (lambda x,y: 2*x+y) in
-          f(g(3,4),g(2,2),h(5,9))" "47";
-  t "f4" "let f = (lambda x,y,z,t: x*y+z*t),
-          g = (lambda x,y: x+y),
-          h = (lambda x,y: 2*x+y),
-          j = (lambda x: x*x) in
-          j(f(g(4,4),h(2,2),g(5,5),h(3,3)))" "272484";
-  t "f5" "let f = (lambda x: if x==1: x else: 0) in f(4)" "0";
-  t "f6" "let f = (lambda x: if x==1: x else: 1) in f(1)" "1";
-  (*t "cyclic1" "let f = (1, 2, 3) in begin f[2] := f; let x = (1, 2) in x; f end" "";*)
-  t "tup_15" "let x = (0, (1, (3, 4))) in x[1][1][1]" "4";
+    t "let_1" "let x:fuck = 5 in x" "5";
 ]
 let suite =
-"suite">:::tests
+"suite">:::dut
  (*pair_tests @ oom @ gc*)
 
 
