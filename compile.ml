@@ -16,12 +16,10 @@ let err_GET_LOW_INDEX  = 7
 let err_GET_HIGH_INDEX = 8
 let err_INDEX_NOT_NUM  = 9
 
-
 let const_true = HexConst (0xFFFFFFFF)
 let const_false = HexConst(0x7FFFFFFF)
 let bool_mask = HexConst(0x80000000)
 let tag_bool = HexConst(0x00000001)
-
 
 type 'a envt = (string * 'a) list
 
@@ -31,7 +29,6 @@ let rec is_anf (e : 'a expr) : bool =
   | EPrim2(_, e1, e2, _) -> is_imm e1 && is_imm e2
   | ELet(binds, body, _) ->
      List.for_all (fun (_, _, e, _) -> is_anf e) binds
-     (*List.for_all (fun (_, e, _) -> is_anf e) binds*)
      && is_anf body
   | EIf(cond, thn, els, _) -> is_imm cond && is_anf thn && is_anf els
   | _ -> is_imm e
@@ -43,6 +40,8 @@ and is_imm e =
   | _ -> false
 ;;
 
+let builtin_types = ["int"; "bool"]
+
 (* FINISH THIS FUNCTION WITH THE WELL-FORMEDNESS FROM FER-DE-LANCE *)
 let well_formed (p : (Lexing.position * Lexing.position) program) builtins : exn list =
   let rec wf_E e (env : sourcespan envt) =
@@ -51,22 +50,35 @@ let well_formed (p : (Lexing.position * Lexing.position) program) builtins : exn
         | [] -> None
         | (y, _, _, pos)::_ when x = y -> Some pos
         | _::rest -> dupe x rest in
+    let wf_S scheme pos =
+        let rec wf_T typ env pos =
+            match typ with
+            | TyCon(name) ->
+                if List.mem name builtin_types then [] else [UnboundId(name, pos)]
+            | TyVar(name) ->
+                if List.mem name env then [] else [UnboundId(name, pos)]
+            | TyArr(type_ls, ret) ->
+                List.flatten (List.map (fun x -> wf_T x env pos) type_ls) @ wf_T ret env pos
+            | TyTup(type_ls) ->
+                List.flatten (List.map (fun x -> wf_T x env pos) type_ls) in
+        match scheme with
+        | Some(forall, typ) -> wf_T typ forall pos
+        | None -> [] in
     match e with
     | ELet(binds, body, _) ->
         let rec process_binds rem_binds env =
             match rem_binds with
             | [] -> (env, [])
-            | (x, s, e, pos)::rest ->
-                let shadow = match dupe x rest with
-                    | Some where -> [DuplicateId(x, where, pos)]
-                    | None ->
-                        try let existing = List.assoc x env in
-                            [ShadowId(x, pos, existing)]
-                        with Not_found -> [] in
-                let errs_e = wf_E e env  in
-                let new_env = (x, pos)::env in
-                let (newer_env, errs) = process_binds rest new_env in
-                (newer_env, (shadow @ errs_e @ errs)) in
+            | (name, scheme, expr, pos)::rest ->
+                let errs_shadow = match dupe name rest with
+                | Some where -> [DuplicateId(name, where, pos)]
+                | None -> try let existing = List.assoc name env in
+                        [ShadowId(name, pos, existing)]
+                    with Not_found -> [] in
+                let errs_type = wf_S scheme pos in
+                let errs_expr = wf_E expr env  in
+                let (new_env, errs_next) = process_binds rest ((name, pos)::env) in
+                (new_env, (errs_shadow @ errs_type @ errs_expr @ errs_next)) in
         let (env2, errs) = process_binds binds env in
         errs @ wf_E body env2
     | ELetRec(binds, body, _) ->
@@ -78,34 +90,34 @@ let well_formed (p : (Lexing.position * Lexing.position) program) builtins : exn
         let rec process_binds rem_binds =
             match rem_binds with
             | [] -> []
-            | (x, s, e, pos)::rest ->
-                match e with
+            | (name, scheme, expr, pos)::rest ->
+                match expr with
                 | ELambda _ ->
-                    let shadow = match dupe x rest with
-                        | Some where -> [DuplicateFun(x, where, pos)]
-                        | None ->
-                            try let existing = List.assoc x env in
-                                [ShadowId(x, pos, existing)]
+                    let errs_shadow = match dupe name rest with
+                        | Some where -> [DuplicateFun(name, where, pos)]
+                        | None -> try let existing = List.assoc name env in
+                                [ShadowId(name, pos, existing)]
                             with Not_found -> [] in
-                    let errs_e = wf_E e new_env in
-                    let errs = process_binds rest in
-                    (shadow @ errs_e @ errs)
+                    let errs_type = wf_S scheme pos in
+                    let errs_expr = wf_E expr new_env in
+                    let errs_next = process_binds rest in
+                    (errs_shadow @ errs_type @ errs_expr @ errs_next)
                 | _ ->
                     let errs = process_binds rest in
-                    LetRecNonFunction(x, pos)::errs in
+                    LetRecNonFunction(name, pos)::errs in
         let errs = process_binds binds in
         errs @ wf_E body new_env
     | EBool _ -> []
-    | ENumber(n, loc) ->
-       if n > 1073741823 || n < -1073741824 then [Overflow(n, loc)] else []
-    | EId (x, loc) ->
+    | ENumber(n, pos) ->
+       if n > 1073741823 || n < -1073741824 then [Overflow(n, pos)] else []
+    | EId (x, pos) ->
        (try ignore (List.assoc x env); []
         with Not_found ->
-             [UnboundId(x, loc)])
+             [UnboundId(x, pos)])
     | EPrim1(_, e, _) -> wf_E e env
     | EPrim2(_, l, r, _) -> wf_E l env @ wf_E r env
     | EIf(c, t, f, _) -> wf_E c env @ wf_E t env @ wf_E f env
-    | ETuple(vals, _) -> List.concat (List.map (fun e -> wf_E e env) vals)
+    | ETuple(vals, _) -> List.flatten (List.map (fun e -> wf_E e env) vals)
     | EGetItem(tup, idx, _) -> wf_E tup env @ wf_E idx env
     | ESetItem(tup, idx, rhs, _) -> wf_E tup env @ wf_E idx env @ wf_E rhs env
     | EGetItemExact(tup, idx, _) -> wf_E tup env
@@ -114,7 +126,7 @@ let well_formed (p : (Lexing.position * Lexing.position) program) builtins : exn
     | ELambda(args, body, _) ->
        wf_E body (args @ env)
     | EApp(func, args, loc) ->
-       (wf_E func env) @ List.concat (List.map (fun e -> wf_E e env) args)
+       (wf_E func env) @ List.flatten (List.map (fun e -> wf_E e env) args)
   in
   wf_E p builtins
 ;;
@@ -159,10 +171,10 @@ let anf (p : tag program) : unit aprogram =
     | EApp(func, args, _) ->
        let (new_func, func_setup) = helpI func in
        let (new_args, new_setup) = List.split (List.map helpI args) in
-       (CApp(new_func, new_args, ()), func_setup @ List.concat new_setup)
+       (CApp(new_func, new_args, ()), func_setup @ List.flatten new_setup)
     | ETuple(args, _) ->
        let (new_args, new_setup) = List.split (List.map helpI args) in
-       (CTuple(new_args, ()), List.concat new_setup)
+       (CTuple(new_args, ()), List.flatten new_setup)
     | EGetItem(tup, idx, _) ->
        let (tup_imm, tup_setup) = helpI tup in
        let (idx_imm, idx_setup) = helpI idx in
@@ -202,7 +214,7 @@ let anf (p : tag program) : unit aprogram =
        let tmp = sprintf "app_%d" tag in
        let (new_func, func_setup) = helpI func in
        let (new_args, new_setup) = List.split (List.map helpI args) in
-       (ImmId(tmp, ()), (func_setup @ List.concat new_setup) @ [BLet(tmp, CApp(new_func, new_args, ()))])
+       (ImmId(tmp, ()), (func_setup @ List.flatten new_setup) @ [BLet(tmp, CApp(new_func, new_args, ()))])
     | ESeq([], _) -> failwith "Impossible by syntax"
     | ESeq([stmt], _) -> helpI stmt
     | ESeq(fst :: rest, tag) ->
@@ -219,7 +231,7 @@ let anf (p : tag program) : unit aprogram =
        let (names, new_binds_setup) = List.split (List.map (fun (name, schm, rhs, _) -> (name, helpC rhs)) binds) in
        let (new_binds, new_setup) = List.split new_binds_setup in
        let (body_ans, body_setup) = helpC body in
-       (ImmId(tmp, ()), (List.concat new_setup)
+       (ImmId(tmp, ()), (List.flatten new_setup)
                         @ [BLetRec (List.combine names new_binds)]
                         @ body_setup
                         @ [BLet(tmp, body_ans)])
@@ -229,7 +241,7 @@ let anf (p : tag program) : unit aprogram =
     | ETuple(args, tag) ->
        let tmp = sprintf "tup_%d" tag in
        let (new_args, new_setup) = List.split (List.map helpI args) in
-       (ImmId(tmp, ()), (List.concat new_setup) @ [BLet(tmp, CTuple(new_args, ()))])
+       (ImmId(tmp, ()), (List.flatten new_setup) @ [BLet(tmp, CTuple(new_args, ()))])
     | EGetItem(tup, idx, tag) ->
        let tmp = sprintf "get_%d" tag in
        let (tup_imm, tup_setup) = helpI tup in
@@ -270,8 +282,8 @@ let rec free_typ_tyvars typ =
   match typ with
   | TyCon _ -> []
   | TyVar s -> [s]
-  | TyArr(args, ret) -> List.concat (List.map free_typ_tyvars (args @ [ret]))
-  | TyTup(args) -> List.concat (List.map free_typ_tyvars args)
+  | TyArr(ls, ret) -> List.flatten (List.map free_typ_tyvars (ls @ [ret]))
+  | TyTup(ls) -> List.flatten (List.map free_typ_tyvars ls)
 and free_scheme_tyvars (args, typ) =
   List.fold_left ExtList.List.remove (List.sort_uniq String.compare (free_typ_tyvars typ)) args
 ;;
@@ -342,6 +354,21 @@ let rec unify unif_env t1 t2 =
        | _ -> raise (TypeError "Unifying two different arity TyArrs"))
     | _ -> raise (TypeError "Unifying something that is not allowed")
 
+(*let rec simplify_type (t : typ) (u : unification) : typ =*)
+let rec simplify_type t u =
+    let helpT x = simplify_type x u in
+    match t with
+    | TyCon _ -> t
+    | TyVar name -> uget(List.assoc name u)
+    | TyArr(ls, ret) -> TyArr(List.map helpT ls, simplify_type ret u)
+    | TyTup(ls) -> TyTup(List.map helpT ls)
+(*and simplify_scheme (s : scheme) (u : unification) : scheme =*)
+and simplify_scheme s u =
+    let helpT x = match uget(List.assoc x u) with
+        | TyVar n -> n
+        | _ -> raise (TypeError "Failed to simplify forall type in scheme") in
+    (List.map helpT (fst s), simplify_type (snd s) u)
+
 let rec type_check gamma exp typ : bool =
   match exp with
   | ELet(binds, body, _) -> failwith "NYI"
@@ -372,14 +399,12 @@ and type_infer gamma exp : scheme =
   | ESetItem(tup, idx, value, _) -> failwith "NYI"
   | EGetItemExact(tup, idx, _) -> failwith "NYI"
   | ESetItemExact(tup, idx, value, _) -> failwith "NYI"
-  | ENumber(_, _) -> (["bool"], TyCon "bool")
-  | EBool(_, _) -> (["int"], TyCon "int")
+  | ENumber(_, _) -> ([], TyCon("bool"))
+  | EBool(_, _) -> ([], TyCon("int"))
   | EId(name, _) -> failwith "NYI"
   | EApp(func, args, _) -> failwith "NYI"
   | ELambda(args, body, _) -> failwith "NYI"
   | ESeq(exps, _) -> type_infer gamma (List.hd (List.rev exps))
-;;
-
 
 let reserve size tag =
   let ok = sprintf "$memcheck_%d" tag in

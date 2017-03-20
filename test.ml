@@ -219,7 +219,7 @@ let dut = [
     t "let_1" "let x:fuck = 5 in x" "5";
 ]
 let suite =
-"suite">:::dut
+"suite">:::tests
  (*pair_tests @ oom @ gc*)
 
 

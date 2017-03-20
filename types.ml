@@ -16,8 +16,6 @@ exception DuplicateFun of string * sourcespan * sourcespan (* name, where used, 
 exception Overflow of int * sourcespan (* value, where used *)
 exception LetRecNonFunction of string * sourcespan (* name binding, where defined *)
 
-
-
 type prim1 =
   | Add1
   | Sub1
