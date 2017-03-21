@@ -55,7 +55,7 @@ let name_of_op2 op =
   | GreaterEq -> "GreaterEq"
   | LessEq -> "LessEq"
   | Eq -> "Eq"
-               
+
 
 let rec string_of_typ t =
   match t with
@@ -72,7 +72,7 @@ let string_of_sopt (sopt : scheme option) : string =
   match sopt with
   | None -> ""
   | Some scheme -> " : " ^ (string_of_scheme scheme)
-  
+
 let rec string_of_expr (e : 'a expr) : string =
   match e with
   | ENumber(n, _) -> string_of_int n
@@ -157,7 +157,7 @@ and string_of_immexpr i =
   | ImmBool(b, _) -> string_of_bool b
   | ImmId(x, _) -> x
 and string_of_aprogram p = string_of_aexpr p
-          
+
 let rec format_expr (e : 'a expr) (print_a : 'a -> string) : string =
   let maybe_a a =
     let astr = print_a a in
@@ -199,7 +199,7 @@ let rec format_expr (e : 'a expr) (print_a : 'a -> string) : string =
     | EPrim1(op, e, a) ->
        open_label fmt "EPrim1" a;
        pp_print_string fmt (name_of_op1 op);
-       print_comma_sep fmt; help e fmt; 
+       print_comma_sep fmt; help e fmt;
        close_paren fmt
     | EPrim2(op, e1, e2, a) ->
        open_label fmt "EPrim2" a;
@@ -229,13 +229,13 @@ let rec format_expr (e : 'a expr) (print_a : 'a -> string) : string =
     | EGetItem(tup, idx, a) ->
        open_label fmt "EGetItem" a;
        help tup fmt;
-       print_comma_sep fmt; help idx fmt; 
+       print_comma_sep fmt; help idx fmt;
        close_paren fmt
     | ESetItem(tup, idx, rhs, a) ->
        open_label fmt "ESetItem" a;
        help tup fmt;
-       print_comma_sep fmt; help idx fmt; 
-       print_comma_sep fmt; help rhs fmt; 
+       print_comma_sep fmt; help idx fmt;
+       print_comma_sep fmt; help rhs fmt;
        close_paren fmt
     | EGetItemExact(tup, idx, a) ->
        open_label fmt "EGetItemExact" a;
@@ -246,11 +246,11 @@ let rec format_expr (e : 'a expr) (print_a : 'a -> string) : string =
        open_label fmt "ESetItemExact" a;
        help tup fmt;
        print_comma_sep fmt; pp_print_int fmt idx;
-       print_comma_sep fmt; help rhs fmt; 
+       print_comma_sep fmt; help rhs fmt;
        close_paren fmt
     | ESeq(stmts, a) ->
        open_label fmt "ESeq" a;
-       print_list fmt help stmts print_semi_sep; 
+       print_list fmt help stmts print_semi_sep;
        close_paren fmt
     | ELet(binds, body, a) ->
        let print_item (x, sopt, b, a) fmt =
@@ -291,12 +291,12 @@ let rec format_expr (e : 'a expr) (print_a : 'a -> string) : string =
 and format_prog (p : 'a program) (print_a : 'a -> string) : string =
   format_expr p print_a
 ;;
-    
+
 let ast_of_pos_prog (e : sourcespan program) : string =
   format_prog e string_of_pos
 let ast_of_prog (e : 'a program) : string =
   format_prog e (fun _ -> "")
-                            
+
 let rec ast_of_pos_expr (e : (Lexing.position * Lexing.position) expr) : string =
   format_expr e string_of_pos
 let rec ast_of_expr (e : 'a expr) : string =

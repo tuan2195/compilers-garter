@@ -216,10 +216,27 @@ let tests = [
 ]
 
 let dut = [
-    t "let_1" "let x:fuck = 5 in x" "5";
+  t "f1" "let sq = (lambda x: x * x), ten = (lambda: 10) in sq(ten())" "100";
+  t "f2" "let sub = (lambda x, y: x - y) in sub(8, 6)" "2";
+  t "f3" "let f = (lambda x,y,z: x*y+z),
+          g = (lambda x,y: x+y),
+          h = (lambda x,y: 2*x+y) in
+          f(g(3,4),g(2,2),h(5,9))" "47";
+  t "f4" "let f = (lambda x,y,z,t: x*y+z*t),
+          g = (lambda x,y: x+y),
+          h = (lambda x,y: 2*x+y),
+          j = (lambda x: x*x) in
+          j(f(g(4,4),h(2,2),g(5,5),h(3,3)))" "272484";
+  t "f5" "let f = (lambda x: if x==1: x else: 0) in f(4)" "0";
+  t "f6" "let f = (lambda x: if x==1: x else: 1) in f(1)" "1";
+  t "f7" "let rec f = (lambda x: if x==0: 0 else: (x + f(x - 1))) in f(24)" "300";
+  t "f8" "let rec f = (lambda x: if x==0: 1 else: (x * f(x - 1))) in f(6)" "720";
+  t "f9" "let rec f = (lambda x: if x==0: 1 else: (x * f(x - 1))) in f(10)" "3628800";
+  t "f10" "let f = (lambda: 5) in f()" "5";
+  t "f11" "let f = (lambda x: x + 1) in let y = (lambda x: x(5)) in y(f)" "6";
 ]
 let suite =
-"suite">:::tests
+"suite">:::dut
  (*pair_tests @ oom @ gc*)
 
 

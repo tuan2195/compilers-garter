@@ -130,6 +130,265 @@ let well_formed (p : (Lexing.position * Lexing.position) program) builtins : exn
   in
   wf_E p builtins
 ;;
+(* Type checking *)
+
+let rec free_typ_tyvars typ =
+  match typ with
+  | TyCon _ -> []
+  | TyVar s -> [s]
+  | TyArr(ls, ret) -> List.flatten (List.map free_typ_tyvars (ls @ [ret]))
+  | TyTup(ls) -> List.flatten (List.map free_typ_tyvars ls)
+and free_scheme_tyvars (args, typ) =
+  List.fold_left ExtList.List.remove (List.sort_uniq String.compare (free_typ_tyvars typ)) args
+;;
+(* A unification is a dictionary mapping type variable names to
+   unifiables (from the BatUref library) containing types.
+ *)
+(*type 'a envt = (string * 'a) list*)
+type unification = (typ uref) envt;;
+
+(* The function bind ensures that we can't have infinite types (e.g., by trying to equate
+   X with [X -> Y]), and produces a small unification environment containing this single
+   type variable, if this occurs check passes. *)
+exception OccursCheck of string
+let bind (tyvarname : string) (t : typ) : unification =
+  match t with
+  | TyVar name when tyvarname = name -> [] (* nothing to be done *)
+  | _ ->
+     if List.mem tyvarname (free_typ_tyvars t)
+     then raise (OccursCheck (sprintf "Infinite types: %s occurs in %s" tyvarname (string_of_typ t)))
+     else [tyvarname, uref t] (* make a unification containing just this one type variable, mapped to t *)
+
+(* Unify takes two types, and a unification describing the known equalities among types,
+   and tries to unify the two types.
+
+   If the first type is a TyVar, unify it with the second type.
+   If the second type is a TyVar, unify it with the first.
+
+   If both types are TyCons, and the same type constant, then unification succeeds.
+
+   If both are TyArrs of the same arity, recur on the pieces and unify them.
+
+   If both are TyTup of the same arity, recur on the pieces and unify them.
+
+   Otherwise, raise a type error explaining the mismatch.
+
+   Return the unification, especially if it's been modified...
+*)
+exception TypeError of string
+(*let rec unify (unif_env : unification) (t1 : typ) (t2 : typ) : unification =*)
+let rec unify unif_env t1 t2 =
+    match t1, t2 with
+    | TyCon n1, TyCon n2 ->
+       if n1 = n2 then unif_env
+       else raise (TypeError (sprintf "Unifying two different TyCons: %s & %s" n1 n2))
+    | TyVar n1, _ when not(List.mem_assoc n1 unif_env) ->
+       (bind n1 t2) @ unif_env
+    | _, TyVar n2 when not(List.mem_assoc n2 unif_env) ->
+       (bind n2 t1) @ unif_env
+    | TyVar n1, TyVar n2 ->
+       let n1_ref = List.assoc n1 unif_env in
+       let n2_ref = List.assoc n2 unif_env in
+       let choose_new_representative t1 t2 =
+         (* When we get inside this function, we're effectively producing a
+            new type equality asserting `t1 = t2`, but as we discussed in class,
+            we need to pick a preferred direction to rewrite that equality,
+            either saying "Rewrite t1 as t2", or "Rewrite t2 as t1".  If this function
+            returns t2, for example, then we're choosing the first direction,
+            "Rewrite t1 as t2".  You need to implement this function to choose the
+            correct direction, depending on what the types are. *)
+         t1 in
+       unite ~sel:choose_new_representative n1_ref n2_ref;
+       unif_env
+    | TyTup l1, TyTup l2 ->
+       (try List.fold_left2 unify unif_env l1 l2 with
+       | _ -> raise (TypeError "Unifying two different arity TyTups"))
+    | TyArr(l1, r1), TyArr(l2, r2) ->
+       (try unify (List.fold_left2 unify unif_env l1 l2) r1 r2 with
+       | _ -> raise (TypeError "Unifying two different arity TyArrs"))
+    | _ -> raise (TypeError "Unifying something that is not allowed")
+
+let try_unify unf t1 t2 = let _ = unify unf t1 t2 in ()
+
+(*let rec simplify_type (t : typ) (u : unification) : typ =*)
+let rec simplify_type t u =
+    let helpT x = simplify_type x u in
+    match t with
+    | TyCon _ -> t
+    | TyVar name -> uget(List.assoc name u)
+    | TyArr(ls, ret) -> TyArr(List.map helpT ls, simplify_type ret u)
+    | TyTup(ls) -> TyTup(List.map helpT ls)
+(*and simplify_scheme (s : scheme) (u : unification) : scheme =*)
+(*and simplify_scheme s u =*)
+    (*let helpT x = match uget(List.assoc x u) with*)
+        (*| TyVar n -> n*)
+        (*| _ -> raise (TypeError "Failed to simplify forall type in scheme") in*)
+    (*(List.map helpT (fst s), simplify_type (snd s) u)*)
+
+let genint = let count = ref 0 in fun () -> incr count; !count
+
+let gensym x = sprintf "_%s_%d_" x (genint ())
+
+let instance s =
+    simplify_type (snd s) (List.map (fun x -> (x, uref(TyVar(gensym x)))) (fst s))
+
+let generalize unf t =
+    let rec help t = match t with
+    | TyCon _ -> []
+    | TyVar name -> if List.mem_assoc name unf then [name] else []
+    | TyArr(ls, ret) -> List.flatten(List.map help ls) @ help ret
+    | TyTup(ls) -> List.flatten(List.map help ls) in
+    (help t, t)
+
+let type_lookup unf name = uget (List.assoc name unf)
+
+let get_int e = match e with
+    | ENumber(x, _) -> x
+    | _ -> failwith "GetInt called on non-number"
+
+let const_type_bool = TyCon("bool")
+let const_type_int  = TyCon("int")
+(*type 'a envt = (string * 'a) list*)
+(*type unification = (typ uref) envt;;*)
+let rec type_check unf exp =
+    let _ = type_infer unf exp in ()
+    (*match exp with*)
+    (*| ELet(binds, body, _) -> failwith "NYI"*)
+    (*| ELetRec(binds, body, _) -> failwith "NYI"*)
+    (*| EPrim1(op, exp, _) -> failwith "NYI"*)
+    (*| EPrim2(op, left, right, _) -> failwith "NYI"*)
+    (*| EIf(cond, thn, els, _) -> failwith "NYI"*)
+    (*| ETuple(exps, _) -> failwith "NYI"*)
+    (*| EGetItem(tup, idx, _) -> failwith "NYI"*)
+    (*| ESetItem(tup, idx, value, _) -> failwith "NYI"*)
+    (*| EGetItemExact(tup, idx, _) -> failwith "NYI"*)
+    (*| ESetItemExact(tup, idx, value, _) -> failwith "NYI"*)
+    (*| ENumber(_, _) -> failwith "NYI"*)
+    (*| EBool(_, _) -> failwith "NYI"*)
+    (*| EId(name, _) -> failwith "NYI"*)
+    (*| EApp(func, args, _) -> failwith "NYI"*)
+    (*| ELambda(args, body, _) -> failwith "NYI"*)
+    (*| ESeq(exps, _) -> failwith "NYI"*)
+and type_infer unf exp : scheme =
+    match exp with
+    | ELet(binds, body, _) ->
+        let helpL unf (name, scheme, expr, _) =
+            match scheme with
+            | Some s -> (name, uref (instance s))::unf
+            | _ -> (name, uref (snd (type_infer unf expr)))::unf in
+        (*let helpL unf (name, scheme, expr, _) =*)
+            (*match scheme with*)
+            (*| Some(ls, typ) -> (name, uref typ)::unf*)
+            (*| _ -> (name, uref (get_typ (type_infer unf expr)))::unf in*)
+        type_infer (List.fold_left helpL unf binds) body
+    | ELetRec(binds, body, _) ->
+        (* Imperfect *)
+        let helpLR (name, scheme, expr, _) =
+            match scheme with
+            | Some s -> (name, uref (instance s))
+            | _ -> (name, uref (snd (type_infer unf expr))) in
+        (*let helpLR (name, scheme, expr, _) =*)
+            (*match scheme with*)
+            (*| Some(_, typ) -> (name, uref typ)*)
+            (*| _ -> (name, uref (get_typ (type_infer unf expr))) in*)
+        type_infer (unf @ (List.map helpLR binds)) body
+    | EPrim1(op, exp, pos) ->
+        let (ls, t) = type_infer unf exp in
+        (match op with
+        | Add1 | Sub1 ->
+            (try try_unify unf t const_type_int with
+            | _ -> raise (TypeError (sprintf "At %s: Add1/Sub1 expects an integer" (string_of_pos pos))))
+        | Not ->
+            (try try_unify unf t const_type_bool with
+            | _ -> raise (TypeError (sprintf "At %s: Add1/Sub1 expects an integer" (string_of_pos pos))))
+        | Print | PrintStack ->
+            ()
+        | IsNum | IsBool | IsTuple ->
+            raise (TypeError (sprintf "At %s: Runtime type check deprecated" (string_of_pos pos))));
+        (ls, t)
+    | EPrim2(op, left, right, pos) ->
+        let (ls1, t1) = type_infer unf left in
+        let (ls2, t2) = type_infer unf right in
+        let typ = match op with
+            | Plus | Minus | Times ->
+                (try try_unify unf t1 const_type_int; try_unify unf t2 const_type_int with
+                | _ -> raise (TypeError (sprintf "At %s: Arithmetic expects two integers" (string_of_pos pos))));
+                const_type_int
+            | Less | Greater | LessEq | GreaterEq | Eq ->
+                (try try_unify unf t1 const_type_int; try_unify unf t2 const_type_int with
+                | _ -> raise (TypeError (sprintf "At %s: Comparison expects two integers" (string_of_pos pos))));
+                const_type_bool
+            | And | Or ->
+                (try try_unify unf t1 const_type_bool; try_unify unf t2 const_type_bool with
+                | _ -> raise (TypeError (sprintf "At %s: Logic expects two booleans" (string_of_pos pos))));
+                const_type_bool in
+        (ls1 @ ls2, typ)
+    | EIf(cond, thn, els, pos) ->
+        let (lsi, type_cond) = type_infer unf cond in
+        let (lst, type_then) = type_infer unf thn in
+        let (lse, type_else) = type_infer unf els in
+        (try try_unify unf type_cond const_type_bool with
+        | _ -> raise (TypeError (sprintf "At %s: If condition must be a boolean" (string_of_pos pos))));
+        (try try_unify unf type_then type_else with
+        | _ -> raise (TypeError (sprintf "At %s: If branches type mismatch" (string_of_pos pos))));
+        (lsi @ lst @ lse, type_else)
+    | ETuple(exps, _) ->
+        let helpT (prev_ls, prev_t) e =
+            let (ls, typ) = type_infer unf e in
+            (ls @ prev_ls, typ::prev_t) in
+        let ans = List.fold_left helpT ([], []) exps in
+        (fst ans, TyTup(snd ans))
+    | EGetItem(tup, idx, pos) ->
+        (try type_infer unf (EGetItemExact(tup, get_int idx, pos)) with
+        | _ -> raise (TypeError (sprintf "At %s: GetIndex expected an integer" (string_of_pos pos))))
+    | ESetItem(tup, idx, value, pos) ->
+        (try type_infer unf (ESetItemExact(tup, get_int idx, value, pos)) with
+        | _ -> raise (TypeError (sprintf "At %s: SetIndex expected an integer" (string_of_pos pos))))
+    | EGetItemExact(tup, idx, pos) ->
+        let (s, t) = type_infer unf tup in
+        (match t with
+        | TyTup(ls) -> (s, List.nth ls idx)
+        | _ -> raise (TypeError (sprintf "At %s: GetIndex expected an tuple" (string_of_pos pos))))
+    | ESetItemExact(tup, idx, value, pos) ->
+        let (s, t) = type_infer unf tup in
+        (match t with
+        | TyTup(ls) ->
+            let t = List.nth ls idx in
+            let (vs, vt) = type_infer unf value in
+            (try try_unify unf t vt with
+            | _ -> raise (TypeError (sprintf "At %s: SetIndex type mismatch" (string_of_pos pos))));
+            (vs, vt)
+        | _ -> raise (TypeError (sprintf "At %s: SetIndex expected an tuple" (string_of_pos pos))))
+    | ENumber(_, _) ->
+        ([], const_type_int)
+    | EBool(_, _) ->
+        ([], const_type_bool)
+    | EId(name, _) ->
+        ([], type_lookup unf name)
+    | EApp(func, args, pos) ->
+        let (sf, tf) = type_infer unf func in
+        (match tf with
+        | TyArr(lsf, ret) ->
+            (try List.iter2
+                 (fun x y -> try_unify unf x y)
+                 (List.map (fun x -> snd (type_infer unf x)) args)
+                 lsf with
+            | Invalid_argument _ ->
+                raise (TypeError (sprintf "At %s: Function application arity mismatch: Expected %d, but got %d"
+                (string_of_pos pos) (List.length lsf) (List.length args)))
+            | _ ->
+                raise (TypeError (sprintf "At %s: Function application type mismatch" (string_of_pos pos))));
+            (sf, ret)
+        | _ -> raise (TypeError (sprintf "At %s: Function application expected a lambda" (string_of_pos pos))))
+    | ELambda(args, body, _) ->
+        let args_name = List.map fst args in
+        let args_type = List.map (fun x -> TyVar(gensym x)) args_name in
+        let unfa = List.map2 (fun x y -> (x, uref y)) args_name args_type in
+        let ans = type_infer (unf @ unfa) body in
+        (fst ans, TyArr(args_type, snd ans))
+    | ESeq(exps, _) ->
+        type_infer unf (List.hd (List.rev exps))
+(*and get_typ s = let (_, t) = s in t*)
 
 type 'a anf_bind =
   | BSeq of 'a cexpr
@@ -276,136 +535,6 @@ let anf (p : tag program) : unit aprogram =
   helpP p
 ;;
 
-(* Type checking *)
-
-let rec free_typ_tyvars typ =
-  match typ with
-  | TyCon _ -> []
-  | TyVar s -> [s]
-  | TyArr(ls, ret) -> List.flatten (List.map free_typ_tyvars (ls @ [ret]))
-  | TyTup(ls) -> List.flatten (List.map free_typ_tyvars ls)
-and free_scheme_tyvars (args, typ) =
-  List.fold_left ExtList.List.remove (List.sort_uniq String.compare (free_typ_tyvars typ)) args
-;;
-(* A unification is a dictionary mapping type variable names to
-   unifiables (from the BatUref library) containing types.
- *)
-(*type 'a envt = (string * 'a) list*)
-type unification = (typ uref) envt;;
-
-(* The function bind ensures that we can't have infinite types (e.g., by trying to equate
-   X with [X -> Y]), and produces a small unification environment containing this single
-   type variable, if this occurs check passes. *)
-exception OccursCheck of string
-let bind (tyvarname : string) (t : typ) : unification =
-  match t with
-  | TyVar name when tyvarname = name -> [] (* nothing to be done *)
-  | _ ->
-     if List.mem tyvarname (free_typ_tyvars t)
-     then raise (OccursCheck (sprintf "Infinite types: %s occurs in %s" tyvarname (string_of_typ t)))
-     else [tyvarname, uref t] (* make a unification containing just this one type variable, mapped to t *)
-
-(* Unify takes two types, and a unification describing the known equalities among types,
-   and tries to unify the two types.
-
-   If the first type is a TyVar, unify it with the second type.
-   If the second type is a TyVar, unify it with the first.
-
-   If both types are TyCons, and the same type constant, then unification succeeds.
-
-   If both are TyArrs of the same arity, recur on the pieces and unify them.
-
-   If both are TyTup of the same arity, recur on the pieces and unify them.
-
-   Otherwise, raise a type error explaining the mismatch.
-
-   Return the unification, especially if it's been modified...
-*)
-exception TypeError of string
-(*let rec unify (unif_env : unification) (t1 : typ) (t2 : typ) : unification =*)
-let rec unify unif_env t1 t2 =
-    match t1, t2 with
-    | TyCon n1, TyCon n2 ->
-       if n1 = n2 then unif_env
-       else raise (TypeError "Unifying two different value TyCons")
-    | TyVar n1, _ when not(List.mem_assoc n1 unif_env) ->
-       (bind n1 t2) @ unif_env
-    | _, TyVar n2 when not(List.mem_assoc n2 unif_env) ->
-       (bind n2 t1) @ unif_env
-    | TyVar n1, TyVar n2 ->
-       let n1_ref = List.assoc n1 unif_env in
-       let n2_ref = List.assoc n2 unif_env in
-       let choose_new_representative t1 t2 =
-         (* When we get inside this function, we're effectively producing a
-            new type equality asserting `t1 = t2`, but as we discussed in class,
-            we need to pick a preferred direction to rewrite that equality,
-            either saying "Rewrite t1 as t2", or "Rewrite t2 as t1".  If this function
-            returns t2, for example, then we're choosing the first direction,
-            "Rewrite t1 as t2".  You need to implement this function to choose the
-            correct direction, depending on what the types are. *)
-         t1 in
-       unite ~sel:choose_new_representative n1_ref n2_ref;
-       unif_env
-    | TyTup l1, TyTup l2 ->
-       (try List.fold_left2 unify unif_env l1 l2 with
-       | _ -> raise (TypeError "Unifying two different arity TyTups"))
-    | TyArr(l1, r1), TyArr(l2, r2) ->
-       (try unify (List.fold_left2 unify unif_env l1 l2) r1 r2 with
-       | _ -> raise (TypeError "Unifying two different arity TyArrs"))
-    | _ -> raise (TypeError "Unifying something that is not allowed")
-
-(*let rec simplify_type (t : typ) (u : unification) : typ =*)
-let rec simplify_type t u =
-    let helpT x = simplify_type x u in
-    match t with
-    | TyCon _ -> t
-    | TyVar name -> uget(List.assoc name u)
-    | TyArr(ls, ret) -> TyArr(List.map helpT ls, simplify_type ret u)
-    | TyTup(ls) -> TyTup(List.map helpT ls)
-(*and simplify_scheme (s : scheme) (u : unification) : scheme =*)
-and simplify_scheme s u =
-    let helpT x = match uget(List.assoc x u) with
-        | TyVar n -> n
-        | _ -> raise (TypeError "Failed to simplify forall type in scheme") in
-    (List.map helpT (fst s), simplify_type (snd s) u)
-
-let rec type_check gamma exp typ : bool =
-  match exp with
-  | ELet(binds, body, _) -> failwith "NYI"
-  | ELetRec(binds, body, _) -> failwith "NYI"
-  | EPrim1(op, exp, _) -> failwith "NYI"
-  | EPrim2(op, left, right, _) -> failwith "NYI"
-  | EIf(cond, thn, els, _) -> failwith "NYI"
-  | ETuple(exps, _) -> failwith "NYI"
-  | EGetItem(tup, idx, _) -> failwith "NYI"
-  | ESetItem(tup, idx, value, _) -> failwith "NYI"
-  | EGetItemExact(tup, idx, _) -> failwith "NYI"
-  | ESetItemExact(tup, idx, value, _) -> failwith "NYI"
-  | ENumber(_, _) -> failwith "NYI"
-  | EBool(_, _) -> failwith "NYI"
-  | EId(name, _) -> failwith "NYI"
-  | EApp(func, args, _) -> failwith "NYI"
-  | ELambda(args, body, _) -> failwith "NYI"
-  | ESeq(exps, _) -> failwith "NYI"
-and type_infer gamma exp : scheme =
-  match exp with
-  | ELet(binds, body, _) -> failwith "NYI"
-  | ELetRec(binds, body, _) -> failwith "NYI"
-  | EPrim1(op, exp, _) -> failwith "NYI"
-  | EPrim2(op, left, right, _) -> failwith "NYI"
-  | EIf(cond, thn, els, _) -> failwith "NYI"
-  | ETuple(exps, _) -> failwith "NYI"
-  | EGetItem(tup, idx, _) -> failwith "NYI"
-  | ESetItem(tup, idx, value, _) -> failwith "NYI"
-  | EGetItemExact(tup, idx, _) -> failwith "NYI"
-  | ESetItemExact(tup, idx, value, _) -> failwith "NYI"
-  | ENumber(_, _) -> ([], TyCon("bool"))
-  | EBool(_, _) -> ([], TyCon("int"))
-  | EId(name, _) -> failwith "NYI"
-  | EApp(func, args, _) -> failwith "NYI"
-  | ELambda(args, body, _) -> failwith "NYI"
-  | ESeq(exps, _) -> type_infer gamma (List.hd (List.rev exps))
-
 let reserve size tag =
   let ok = sprintf "$memcheck_%d" tag in
   [
@@ -521,9 +650,6 @@ let rec free_a ae env =
     | ALet(name, expr, body, _) ->
         free_c expr env @ free_a body (name::env)
     | ALetRec(expr_ls, body, _) ->
-        (*let new_env = env @ (List.map fst expr_ls) in*)
-        (*let free_ls = List.flatten (List.map (fun x -> free_c x new_env) (List.map snd expr_ls)) in*)
-        (*free_ls @ free_a body new_env*)
         free_a body (env @ (List.map fst expr_ls))
     | ASeq(expr, rest, _) ->
         free_c expr env @ free_a rest env
@@ -754,7 +880,6 @@ and compile_cexpr e si env num_args use_gc =
         let func_name = sprintf "__lambda_%d__" t in
         let label = sprintf "__lambda_%d_done__" t in
         let heap_size =
-            (* Something's funny, fishy and fucky *)
             let size = List.length free_ls + 3 in
             if size mod 2 = 0 then size
             else size + 1 in
@@ -912,50 +1037,6 @@ let call (label : arg) args =
     else [ IInstrComment(IAdd(Reg(ESP), Const(4 * len)), sprintf "Popping %d arguments" len) ] in
   setup @ [ ICall(label) ] @ teardown
 
-(*let compile_prog anfed =*)
-  (*let prelude =*)
-    (*"section .text*)
-(*extern error*)
-(*extern print*)
-(*extern equal*)
-(*extern try_gc*)
-(*extern HEAP_END*)
-(*extern STACK_BOTTOM*)
-(*global our_code_starts_here" in*)
-  (*let suffix = sprintf "*)
-(*err_comp_not_num:%s*)
-(*err_arith_not_num:%s*)
-(*err_logic_not_bool:%s*)
-(*err_if_not_bool:%s*)
-(*err_overflow:%s*)
-(*err_get_not_tuple:%s*)
-(*err_get_low_index:%s*)
-(*err_get_high_index:%s*)
-(*err_index_not_num:%s"*)
-                       (*(* If you modified `call` above, then fix these up, too *)*)
-                       (*(to_asm (call (Label "error") [Const(err_COMP_NOT_NUM)]))*)
-                       (*(to_asm (call (Label "error") [Const(err_ARITH_NOT_NUM)]))*)
-                       (*(to_asm (call (Label "error") [Const(err_LOGIC_NOT_BOOL)]))*)
-                       (*(to_asm (call (Label "error") [Const(err_IF_NOT_BOOL)]))*)
-                       (*(to_asm (call (Label "error") [Const(err_OVERFLOW)]))*)
-                       (*(to_asm (call (Label "error") [Const(err_GET_NOT_TUPLE)]))*)
-                       (*(to_asm (call (Label "error") [Const(err_GET_LOW_INDEX)]))*)
-                       (*(to_asm (call (Label "error") [Const(err_GET_HIGH_INDEX)]))*)
-                       (*(to_asm (call (Label "error") [Const(err_INDEX_NOT_NUM)]))*)
-  (*in*)
-  (*(* $heap is a mock parameter name, just so that compile_fun knows our_code_starts_here takes in 1 parameter *)*)
-     (*let (prologue, comp_main, epilogue) = compile_fun "our_code_starts_here" ["$heap"] anfed in*)
-     (*let heap_start = [*)
-         (*IInstrComment(IMov(LabelContents("STACK_BOTTOM"), Reg(EBP)), "This is the bottom of our Garter stack");*)
-         (*ILineComment("heap start");*)
-         (*IInstrComment(IMov(Reg(ESI), RegOffset(8, EBP)), "Load ESI with our argument, the heap pointer");*)
-         (*IInstrComment(IAdd(Reg(ESI), Const(7)), "Align it to the nearest multiple of 8");*)
-         (*IInstrComment(IAnd(Reg(ESI), HexConst(0xFFFFFFF8)), "by adding no more than 7 to it")*)
-       (*] in*)
-     (*let main = (prologue @ heap_start @ comp_main @ epilogue) in*)
-
-     (*sprintf "%s%s%s\n" prelude (to_asm main) suffix*)
-
 let compile_prog anfed =
   let prelude =
     "section .text
@@ -996,6 +1077,7 @@ let compile_to_string prog : (exn list, string) either =
   let errors = well_formed prog env in
   match errors with
   | [] ->
+     type_check [] prog;
      let tagged : tag program = tag prog in
      let anfed : tag aprogram = atag (anf tagged) in
      (* printf "Prog:\n%s\n" (ast_of_prog prog); *)
